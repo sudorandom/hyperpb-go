@@ -41,6 +41,9 @@ type Shared struct {
 
 	// Off-arena memory which holds arena pointers to "Cold" parts of a message.
 	Cold []*Cold
+
+	// Overlays maps a message pointer to its mutation overlay.
+	Overlays map[*Message]*MessageOverlay
 }
 
 // Arena returns the message tree's arena.
@@ -85,4 +88,6 @@ func (s *Shared) Free() {
 
 	clear(s.Cold)
 	s.Cold = s.Cold[:0]
+
+	clear(s.Overlays)
 }

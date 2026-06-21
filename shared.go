@@ -15,6 +15,9 @@
 package hyperpb
 
 import (
+	"google.golang.org/protobuf/reflect/protoreflect"
+
+	"buf.build/go/hyperpb/internal/tdp"
 	"buf.build/go/hyperpb/internal/tdp/dynamic"
 	"buf.build/go/hyperpb/internal/xunsafe"
 )
@@ -57,4 +60,10 @@ func (s *Shared) Free() { s.impl.Free() }
 // wrapShared wraps an internal Shared pointer.
 func wrapShared(s *dynamic.Shared) *Shared {
 	return xunsafe.Cast[Shared](s)
+}
+
+func init() {
+	dynamic.CompileHook = func(md protoreflect.MessageDescriptor) *tdp.Type {
+		return &CompileMessageDescriptor(md).impl
+	}
 }

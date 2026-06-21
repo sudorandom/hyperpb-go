@@ -71,37 +71,80 @@ func (m *Message) Range(yield func(protoreflect.FieldDescriptor, protoreflect.Va
 		return
 	}
 
+	var ov *MessageOverlay
+	if m.Shared != nil && m.Shared.Overlays != nil {
+		ov = m.Shared.Overlays[m]
+	}
+
+	if ov == nil {
+		ty := m.Type()
+		f := ty.ByIndex(0)
+		i := 0
+		for f.IsValid() {
+			fd := ty.FieldDescriptors[i]
+			if m.Has(fd) {
+				val := f.Get(unsafe.Pointer(m))
+				if val.IsValid() {
+					if !yield(fd, val) {
+						return
+					}
+				}
+			}
+			f = xunsafe.Add(f, 1)
+			i++
+		}
+		return
+	}
+
+	seen := make(map[protoreflect.FieldNumber]bool)
+
+	// Yield overlay fields
+	for _, val := range ov.Fields {
+		fd := val.fd
+		if ov.Cleared[fd.Number()] {
+			continue
+		}
+		if m.Has(fd) {
+			seen[fd.Number()] = true
+			if !yield(fd, val.val) {
+				return
+			}
+		}
+	}
+
+	// Yield fallback fields
+	if ov.Fallback != nil {
+		keepYielding := true
+		ov.Fallback.Range(func(fd protoreflect.FieldDescriptor, val protoreflect.Value) bool {
+			if seen[fd.Number()] || ov.Cleared[fd.Number()] {
+				return true
+			}
+			seen[fd.Number()] = true
+			keepYielding = yield(fd, val)
+			return keepYielding
+		})
+		if !keepYielding {
+			return
+		}
+	}
+
+	// Yield original fields from the arena
+	cleared := ov.Cleared
 	ty := m.Type()
 	f := ty.ByIndex(0)
 	i := 0
 	for f.IsValid() {
 		fd := ty.FieldDescriptors[i]
-		v := f.Get(unsafe.Pointer(m))
-		switch {
-		case !v.IsValid():
-			goto skip
-
-		case fd.IsList():
-			if v.List().Len() == 0 {
-				goto skip
-			}
-
-		case fd.IsMap():
-			if v.Map().Len() == 0 {
-				goto skip
-			}
-
-		case fd.Message() != nil:
-			if _, empty := v.Interface().(empty.Message); empty {
-				goto skip
+		if !seen[fd.Number()] && (cleared == nil || !cleared[fd.Number()]) {
+			if m.Has(fd) {
+				val := f.Get(unsafe.Pointer(m))
+				if val.IsValid() {
+					if !yield(fd, val) {
+						return
+					}
+				}
 			}
 		}
-
-		if !yield(ty.FieldDescriptors[i], v) {
-			return
-		}
-
-	skip:
 		f = xunsafe.Add(f, 1)
 		i++
 	}
@@ -111,6 +154,30 @@ func (m *Message) Range(yield func(protoreflect.FieldDescriptor, protoreflect.Va
 func (m *Message) Has(fd protoreflect.FieldDescriptor) bool {
 	if m == nil {
 		return false
+	}
+
+	if m.Shared != nil && m.Shared.Overlays != nil {
+		if ov := m.Shared.Overlays[m]; ov != nil {
+			if ov.Cleared[fd.Number()] {
+				return false
+			}
+			if val, ok := ov.Fields[fd.Number()]; ok {
+				if fd.IsList() {
+					return val.val.List().Len() > 0
+				}
+				if fd.IsMap() {
+					return val.val.Map().Len() > 0
+				}
+				if fd.Message() != nil {
+					_, empty := val.val.Interface().(empty.Message)
+					return !empty
+				}
+				return true
+			}
+			if ov.Fallback != nil {
+				return ov.Fallback.Has(fd)
+			}
+		}
 	}
 
 	f := m.Type().ByDescriptor(fd)
@@ -141,9 +208,21 @@ func (m *Message) Has(fd protoreflect.FieldDescriptor) bool {
 // Get retrieves the value for a field.
 func (m *Message) Get(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	if m == nil {
-		// We need to panic here because there's no "reasonable" way to return
-		// a default for message-typed fields here.
 		panic("called Get on nil hyperpb.Message")
+	}
+
+	if m.Shared != nil && m.Shared.Overlays != nil {
+		if ov := m.Shared.Overlays[m]; ov != nil {
+			if ov.Cleared[fd.Number()] {
+				return fd.Default()
+			}
+			if val, ok := ov.Fields[fd.Number()]; ok {
+				return val.val
+			}
+			if ov.Fallback != nil {
+				return ov.Fallback.Get(fd)
+			}
+		}
 	}
 
 	f := m.Type().ByDescriptor(fd)
@@ -152,7 +231,6 @@ func (m *Message) Get(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	}
 
 	if v := f.Get(unsafe.Pointer(m)); v.IsValid() {
-		// NOTE: non-scalar (message/repeated) fields always return a valid value.
 		return v
 	}
 	return fd.Default()
@@ -383,4 +461,243 @@ func (m *Message) Dump() string {
 	}
 
 	return buf.String()
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+func (m *Message) GetUnknown() protoreflect.RawFields {
+	if m == nil {
+		return nil
+	}
+	if m.Shared != nil && m.Shared.Overlays != nil {
+		if ov := m.Shared.Overlays[m]; ov != nil {
+			if ov.Unknown != nil {
+				return ov.Unknown
+			}
+			if ov.Fallback != nil {
+				return ov.Fallback.GetUnknown()
+			}
+		}
+	}
+
+	cold := m.Cold()
+	if cold == nil {
+		return nil
+	}
+
+	if cold.Unknown.Len() == 1 {
+		return cold.Unknown.Ptr().Bytes(m.Shared.Src)
+	}
+
+	var out []byte
+	for _, zc := range cold.Unknown.Raw() {
+		out = append(out, zc.Bytes(m.Shared.Src)...)
+	}
+	return out
+}
+
+func (m *Message) Set(fd protoreflect.FieldDescriptor, val protoreflect.Value) {
+	if m.Shared == nil {
+		panic("cannot mutate invalid/nil message")
+	}
+	m.lazyInitOverlay()
+	ov := m.Shared.Overlays[m]
+
+	if od := fd.ContainingOneof(); od != nil {
+		for i := range od.Fields().Len() {
+			ofd := od.Fields().Get(i)
+			if ofd.Number() != fd.Number() {
+				delete(ov.Fields, ofd.Number())
+				ov.Cleared[ofd.Number()] = true
+			}
+		}
+	}
+
+	ov.Fields[fd.Number()] = overlayVal{fd: fd, val: val}
+	delete(ov.Cleared, fd.Number())
+}
+
+func (m *Message) Clear(fd protoreflect.FieldDescriptor) {
+	if m.Shared == nil {
+		panic("cannot mutate invalid/nil message")
+	}
+	m.lazyInitOverlay()
+	ov := m.Shared.Overlays[m]
+
+	if fd == nil {
+		clear(ov.Fields)
+		ov.Fallback = nil
+		ov.Unknown = nil
+		for _, fdesc := range m.Type().FieldDescriptors {
+			ov.Cleared[fdesc.Number()] = true
+		}
+		return
+	}
+
+	if od := fd.ContainingOneof(); od != nil {
+		for i := range od.Fields().Len() {
+			ofd := od.Fields().Get(i)
+			delete(ov.Fields, ofd.Number())
+			ov.Cleared[ofd.Number()] = true
+		}
+		return
+	}
+
+	delete(ov.Fields, fd.Number())
+	ov.Cleared[fd.Number()] = true
+}
+
+func (m *Message) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	if m.Shared == nil {
+		panic("cannot mutate invalid/nil message")
+	}
+	m.lazyInitOverlay()
+	ov := m.Shared.Overlays[m]
+
+	if val, ok := ov.Fields[fd.Number()]; ok {
+		return val.val
+	}
+
+	if fd.IsList() {
+		var fallback protoreflect.List
+		if m.Has(fd) {
+			fallback = m.Get(fd).List()
+		}
+		f := m.Type().ByDescriptor(fd)
+		var subType *tdp.Type
+		if f != nil && f.Message != nil {
+			subType = f.Message
+		}
+		lst := newCowList(fallback, fd, m.Shared, subType)
+		val := protoreflect.ValueOfList(lst)
+		m.Set(fd, val)
+		return val
+	}
+
+	if fd.IsMap() {
+		var fallback protoreflect.Map
+		if m.Has(fd) {
+			fallback = m.Get(fd).Map()
+		}
+		f := m.Type().ByDescriptor(fd)
+		var valType *tdp.Type
+		if f != nil && f.Message != nil {
+			valType = f.Message
+		}
+		mp := newCowMap(fallback, fd, m.Shared, valType)
+		val := protoreflect.ValueOfMap(mp)
+		m.Set(fd, val)
+		return val
+	}
+
+	if fd.Message() != nil {
+		var newMsg *Message
+		if m.Has(fd) {
+			origVal := m.Get(fd)
+			origMsg := unwrapMessage(origVal.Message())
+			newMsg = m.Shared.New(origMsg.Type())
+			newMsg.lazyInitOverlay()
+			newMsg.Shared.Overlays[newMsg].Fallback = origMsg
+		} else {
+			f := m.Type().ByDescriptor(fd)
+			var subType *tdp.Type
+			if f != nil && f.Message != nil {
+				subType = f.Message
+			} else if m.Shared != nil && m.Shared.Library() != nil {
+				if t, ok := m.Shared.Library().Type(fd.Message()); ok {
+					subType = t
+				}
+			}
+			if subType == nil {
+				if CompileHook != nil {
+					subType = CompileHook(fd.Message())
+				} else {
+					panic("hyperpb: compile hook not set")
+				}
+			}
+			newMsg = m.Shared.New(subType)
+		}
+		val := protoreflect.ValueOfMessage(newMsg.ProtoReflect())
+		m.Set(fd, val)
+		return val
+	}
+
+	panic(fmt.Sprintf("hyperpb: field %v is not mutable (must be message, list, or map)", fd.Name()))
+}
+
+func (m *Message) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	if m.Shared == nil {
+		panic("cannot mutate invalid/nil message")
+	}
+	if fd.IsList() {
+		f := m.Type().ByDescriptor(fd)
+		var subType *tdp.Type
+		if f != nil && f.Message != nil {
+			subType = f.Message
+		}
+		return protoreflect.ValueOfList(newCowList(nil, fd, m.Shared, subType))
+	}
+	if fd.IsMap() {
+		f := m.Type().ByDescriptor(fd)
+		var valType *tdp.Type
+		if f != nil && f.Message != nil {
+			valType = f.Message
+		}
+		return protoreflect.ValueOfMap(newCowMap(nil, fd, m.Shared, valType))
+	}
+	if fd.Message() != nil {
+		f := m.Type().ByDescriptor(fd)
+		var subType *tdp.Type
+		if f != nil && f.Message != nil {
+			subType = f.Message
+		} else if m.Shared != nil && m.Shared.Library() != nil {
+			if t, ok := m.Shared.Library().Type(fd.Message()); ok {
+				subType = t
+			}
+		}
+		if subType == nil {
+			if CompileHook != nil {
+				subType = CompileHook(fd.Message())
+			} else {
+				panic("hyperpb: compile hook not set")
+			}
+		}
+		newMsg := m.Shared.New(subType)
+		return protoreflect.ValueOfMessage(newMsg.ProtoReflect())
+	}
+	return fd.Default()
+}
+
+func (m *Message) SetUnknown(raw protoreflect.RawFields) {
+	if m.Shared == nil {
+		panic("cannot mutate invalid/nil message")
+	}
+	m.lazyInitOverlay()
+	ov := m.Shared.Overlays[m]
+	ov.Unknown = raw
+}
+
+func (m *Message) lazyInitOverlay() {
+	if m.Shared == nil {
+		panic("cannot mutate invalid/nil message")
+	}
+	if m.Shared.Overlays == nil {
+		m.Shared.Overlays = make(map[*Message]*MessageOverlay)
+	}
+	if m.Shared.Overlays[m] == nil {
+		m.Shared.Overlays[m] = &MessageOverlay{
+			Fields:  make(map[protoreflect.FieldNumber]overlayVal),
+			Cleared: make(map[protoreflect.FieldNumber]bool),
+		}
+	}
+}
+
+func unwrapMessage(pm protoreflect.Message) *Message {
+	if pm == nil {
+		return nil
+	}
+	concrete := pm.Interface()
+	if dm, ok := concrete.(*Message); ok {
+		return dm
+	}
+	return (*Message)(unsafe.Pointer(xunsafe.AnyData(concrete)))
 }

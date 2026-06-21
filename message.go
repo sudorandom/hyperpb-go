@@ -24,7 +24,6 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/runtime/protoiface"
 
-	"buf.build/go/hyperpb/internal/debug"
 	"buf.build/go/hyperpb/internal/tdp/dynamic"
 	"buf.build/go/hyperpb/internal/tdp/empty"
 	"buf.build/go/hyperpb/internal/tdp/vm"
@@ -68,6 +67,9 @@ func NewMessage(ty *MessageType) *Message {
 // This function will return the approximate offset into data at which the
 // error occurred.
 func (m *Message) Unmarshal(data []byte, options ...UnmarshalOption) error {
+	if m.impl.Shared != nil && m.impl.Shared.Overlays != nil {
+		delete(m.impl.Shared.Overlays, &m.impl)
+	}
 	opts := vm.NewOptions()
 	for _, opt := range options {
 		if opt.apply != nil {
@@ -152,14 +154,11 @@ func (m *Message) Has(fd protoreflect.FieldDescriptor) bool {
 	return m.impl.Has(fd)
 }
 
-// Clear panics, unless this message has not been unmarshaled yet.
+// Clear clears the field, such that it is no longer populated.
 //
 // Clear implements [protoreflect.Message].
-func (m *Message) Clear(protoreflect.FieldDescriptor) {
-	if m.Shared().impl.Src == nil {
-		return
-	}
-	panic(debug.Unsupported())
+func (m *Message) Clear(fd protoreflect.FieldDescriptor) {
+	m.impl.Clear(fd)
 }
 
 // Reset panics, unless this message has not been unmarshaled yet
@@ -247,25 +246,25 @@ func (m *Message) Get(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	return m.impl.Get(fd)
 }
 
-// Set panics.
+// Set stores the value for a field.
 //
 // Set implements [protoreflect.Message].
-func (m *Message) Set(protoreflect.FieldDescriptor, protoreflect.Value) {
-	panic(debug.Unsupported())
+func (m *Message) Set(fd protoreflect.FieldDescriptor, v protoreflect.Value) {
+	m.impl.Set(fd, v)
 }
 
-// Mutable panics.
+// Mutable returns a mutable reference to a repeated, map, or message field.
 //
 // Mutable implements [protoreflect.Message].
-func (m *Message) Mutable(protoreflect.FieldDescriptor) protoreflect.Value {
-	panic(debug.Unsupported())
+func (m *Message) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	return m.impl.Mutable(fd)
 }
 
-// NewField panics.
+// NewField returns a new, empty value of the type of the field.
 //
 // NewField implements [protoreflect.Message].
-func (m *Message) NewField(protoreflect.FieldDescriptor) protoreflect.Value {
-	panic(debug.Unsupported())
+func (m *Message) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	return m.impl.NewField(fd)
 }
 
 // WhichOneof reports which field within the oneof is populated,
@@ -284,6 +283,18 @@ func (m *Message) WhichOneof(od protoreflect.OneofDescriptor) protoreflect.Field
 		panic("invalid oneof descriptor " + string(od.FullName()) + " for message " + string(m.Descriptor().FullName()))
 	}
 
+	if m.impl.Shared != nil && m.impl.Shared.Overlays != nil {
+		if _, ok := m.impl.Shared.Overlays[&m.impl]; ok {
+			for i := range od.Fields().Len() {
+				ofd := od.Fields().Get(i)
+				if m.Has(ofd) {
+					return ofd
+				}
+			}
+			return nil
+		}
+	}
+
 	if f.Offset.Number == 0 {
 		// Not implemented internally as a oneof.
 		if !m.Has(fd) {
@@ -300,30 +311,14 @@ func (m *Message) WhichOneof(od protoreflect.OneofDescriptor) protoreflect.Field
 //
 // GetUnknown implements [protoreflect.Message].
 func (m *Message) GetUnknown() protoreflect.RawFields {
-	cold := m.impl.Cold()
-	if cold == nil {
-		return nil
-	}
-
-	if cold.Unknown.Len() == 1 {
-		return cold.Unknown.Ptr().Bytes(m.Shared().impl.Src)
-	}
-
-	var out []byte
-	for _, zc := range cold.Unknown.Raw() {
-		out = append(out, zc.Bytes(m.Shared().impl.Src)...)
-	}
-	return out
+	return m.impl.GetUnknown()
 }
 
-// SetUnknown panics, unless raw is zero-length, in which case it does nothing.
+// SetUnknown sets the list of unknown fields.
 //
 // SetUnknown implements [protoreflect.Message].
 func (m *Message) SetUnknown(raw protoreflect.RawFields) {
-	if len(raw) == 0 {
-		return
-	}
-	panic(debug.Unsupported())
+	m.impl.SetUnknown(raw)
 }
 
 // IsValid reports whether the message is valid.
