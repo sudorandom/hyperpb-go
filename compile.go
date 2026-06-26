@@ -78,5 +78,6 @@ func (*backend) SelectArchetype(fd protoreflect.FieldDescriptor, prof profile.Fi
 func (*backend) PopulateMethods(methods *protoiface.Methods) {
 	methods.Flags = protoiface.SupportUnmarshalDiscardUnknown
 	methods.Unmarshal = unmarshalShim
+	methods.Marshal = marshalShim
 	methods.CheckInitialized = requiredShim
 }

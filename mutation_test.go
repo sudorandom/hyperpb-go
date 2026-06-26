@@ -320,6 +320,52 @@ func TestMutationCoW(t *testing.T) {
 	}
 }
 
+func TestMutationNestedParsedMessageDisablesRawMarshal(t *testing.T) {
+	t.Parallel()
+
+	mt, err := protoregistry.GlobalTypes.FindMessageByName("hyperpb.test.Graph")
+	if err != nil {
+		t.Fatalf("failed to find hyperpb.test.Graph: %v", err)
+	}
+
+	fdV := mt.Descriptor().Fields().ByName("v")
+	fdS := mt.Descriptor().Fields().ByName("s")
+
+	gencodeMsg := mt.New().Interface()
+	gencodeMsg.ProtoReflect().Set(fdV, protoreflect.ValueOfInt32(4))
+	gencodeMsg.ProtoReflect().Mutable(fdS).Message().Set(fdV, protoreflect.ValueOfInt32(100))
+
+	data, err := proto.Marshal(gencodeMsg)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	fastType := hyperpb.CompileMessageDescriptor(mt.Descriptor())
+	msg := new(hyperpb.Shared).NewMessage(fastType)
+	if err := proto.Unmarshal(data, msg); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	nested, ok := msg.Get(fdS).Message().Interface().(*hyperpb.Message)
+	if !ok {
+		t.Fatal("expected *hyperpb.Message")
+	}
+	nested.Set(fdV, protoreflect.ValueOfInt32(500))
+
+	gotData, err := proto.Marshal(msg)
+	if err != nil {
+		t.Fatalf("failed to marshal mutated message: %v", err)
+	}
+
+	got := mt.New().Interface()
+	if err := proto.Unmarshal(gotData, got); err != nil {
+		t.Fatalf("failed to unmarshal mutated output: %v", err)
+	}
+	if got.ProtoReflect().Get(fdS).Message().Get(fdV).Int() != 500 {
+		t.Fatalf("expected nested mutation to be marshaled, got %d", got.ProtoReflect().Get(fdS).Message().Get(fdV).Int())
+	}
+}
+
 func TestMutationClear(t *testing.T) {
 	t.Parallel()
 

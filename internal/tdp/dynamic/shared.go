@@ -33,8 +33,9 @@ type Shared struct {
 	arena arena.Arena
 	lib   *tdp.Library
 
-	Src *byte
-	Len int
+	Src  *byte
+	Len  int
+	Root *Message
 
 	// Synchronizes calls to startParse() with this context.
 	Lock sync.Mutex
@@ -75,6 +76,9 @@ func (s *Shared) New(ty *tdp.Type) *Message {
 	xunsafe.StoreNoWB(&m.Shared, s)
 	m.TypeOffset = uint32(xunsafe.ByteSub(ty, s.lib.Base))
 	m.ColdIndex = -1
+	if s.Root == nil {
+		xunsafe.StoreNoWB(&s.Root, m)
+	}
 	return m
 }
 
@@ -85,6 +89,7 @@ func (s *Shared) Free() {
 	s.arena.Free()
 	s.lib = nil
 	s.Src = nil
+	s.Root = nil
 
 	clear(s.Cold)
 	s.Cold = s.Cold[:0]
