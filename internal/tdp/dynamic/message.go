@@ -82,7 +82,7 @@ func (m *Message) Range(yield func(protoreflect.FieldDescriptor, protoreflect.Va
 		i := 0
 		for f.IsValid() {
 			fd := ty.FieldDescriptors[i]
-			if m.Has(fd) {
+			if m.HasNoAlloc(fd, f) {
 				val := f.Get(unsafe.Pointer(m))
 				if val.IsValid() {
 					if !yield(fd, val) {
@@ -96,7 +96,37 @@ func (m *Message) Range(yield func(protoreflect.FieldDescriptor, protoreflect.Va
 		return
 	}
 
-	seen := make(map[protoreflect.FieldNumber]bool)
+	var seenBuf [16]protoreflect.FieldNumber
+	seen := seenBuf[:0]
+	var seenMap map[protoreflect.FieldNumber]bool
+
+	isSeen := func(num protoreflect.FieldNumber) bool {
+		if seenMap != nil {
+			return seenMap[num]
+		}
+		for _, s := range seen {
+			if s == num {
+				return true
+			}
+		}
+		return false
+	}
+
+	markSeen := func(num protoreflect.FieldNumber) {
+		if seenMap != nil {
+			seenMap[num] = true
+			return
+		}
+		if len(seen) < 16 {
+			seen = append(seen, num)
+		} else {
+			seenMap = make(map[protoreflect.FieldNumber]bool)
+			for _, s := range seen {
+				seenMap[s] = true
+			}
+			seenMap[num] = true
+		}
+	}
 
 	// Yield overlay fields
 	for _, val := range ov.Fields {
@@ -105,7 +135,7 @@ func (m *Message) Range(yield func(protoreflect.FieldDescriptor, protoreflect.Va
 			continue
 		}
 		if m.Has(fd) {
-			seen[fd.Number()] = true
+			markSeen(fd.Number())
 			if !yield(fd, val.val) {
 				return
 			}
@@ -116,10 +146,10 @@ func (m *Message) Range(yield func(protoreflect.FieldDescriptor, protoreflect.Va
 	if ov.Fallback != nil {
 		keepYielding := true
 		ov.Fallback.Range(func(fd protoreflect.FieldDescriptor, val protoreflect.Value) bool {
-			if seen[fd.Number()] || ov.Cleared[fd.Number()] {
+			if isSeen(fd.Number()) || ov.Cleared[fd.Number()] {
 				return true
 			}
-			seen[fd.Number()] = true
+			markSeen(fd.Number())
 			keepYielding = yield(fd, val)
 			return keepYielding
 		})
@@ -135,8 +165,8 @@ func (m *Message) Range(yield func(protoreflect.FieldDescriptor, protoreflect.Va
 	i := 0
 	for f.IsValid() {
 		fd := ty.FieldDescriptors[i]
-		if !seen[fd.Number()] && (cleared == nil || !cleared[fd.Number()]) {
-			if m.Has(fd) {
+		if !isSeen(fd.Number()) && (cleared == nil || !cleared[fd.Number()]) {
+			if m.HasNoAlloc(fd, f) {
 				val := f.Get(unsafe.Pointer(m))
 				if val.IsValid() {
 					if !yield(fd, val) {
@@ -147,6 +177,65 @@ func (m *Message) Range(yield func(protoreflect.FieldDescriptor, protoreflect.Va
 		}
 		f = xunsafe.Add(f, 1)
 		i++
+	}
+}
+
+// HasNoAlloc reports whether a field is populated in the base message (ignoring overlays),
+// without performing any heap allocations.
+func (m *Message) HasNoAlloc(fd protoreflect.FieldDescriptor, f *tdp.Field) bool {
+	if m == nil {
+		return false
+	}
+
+	if fd.IsList() {
+		v := f.Get(unsafe.Pointer(m))
+		return v.IsValid() && v.List().Len() > 0
+	}
+	if fd.IsMap() {
+		v := f.Get(unsafe.Pointer(m))
+		return v.IsValid() && v.Map().Len() > 0
+	}
+	if od := fd.ContainingOneof(); od != nil && f.Offset.Number != 0 {
+		which := xunsafe.ByteLoad[uint32](m, f.Offset.Bit)
+		return which == uint32(fd.Number())
+	}
+	if fd.Message() != nil {
+		p := GetField[*Message](m, f.Offset)
+		return p != nil && *p != nil
+	}
+
+	// For optional scalars/strings/bytes (excluding oneofs and messages)
+	if fd.HasPresence() {
+		return m.GetBit(f.Offset.Bit)
+	}
+
+	// Proto3 implicit presence scalar/string/bytes
+	switch fd.Kind() {
+	case protoreflect.BoolKind:
+		return m.GetBit(f.Offset.Bit)
+	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
+		p := GetField[int32](m, f.Offset)
+		return p != nil && *p != 0
+	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
+		p := GetField[uint32](m, f.Offset)
+		return p != nil && *p != 0
+	case protoreflect.FloatKind:
+		p := GetField[uint32](m, f.Offset)
+		return p != nil && *p != 0
+	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
+		p := GetField[int64](m, f.Offset)
+		return p != nil && *p != 0
+	case protoreflect.Uint64Kind, protoreflect.Fixed64Kind, protoreflect.DoubleKind:
+		p := GetField[uint64](m, f.Offset)
+		return p != nil && *p != 0
+	case protoreflect.EnumKind:
+		p := GetField[protoreflect.EnumNumber](m, f.Offset)
+		return p != nil && *p != 0
+	case protoreflect.StringKind, protoreflect.BytesKind:
+		p := GetField[zc.Range](m, f.Offset)
+		return p != nil && (*p).Len() > 0
+	default:
+		return false
 	}
 }
 
@@ -185,24 +274,7 @@ func (m *Message) Has(fd protoreflect.FieldDescriptor) bool {
 		return false
 	}
 
-	v := f.Get(unsafe.Pointer(m))
-	switch {
-	case !v.IsValid():
-		return false
-
-	case fd.IsList():
-		return v.List().Len() > 0
-
-	case fd.IsMap():
-		return v.Map().Len() > 0
-
-	case fd.Message() != nil:
-		_, empty := v.Interface().(empty.Message)
-		return !empty
-
-	default:
-		return true
-	}
+	return m.HasNoAlloc(fd, f)
 }
 
 // Get retrieves the value for a field.

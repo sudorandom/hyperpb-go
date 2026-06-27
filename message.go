@@ -17,12 +17,9 @@ package hyperpb
 import (
 	"errors"
 	"fmt"
-	"math"
-	"unicode/utf8"
 	"unsafe"
 	_ "unsafe"
 
-	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/runtime/protoiface"
@@ -388,7 +385,7 @@ func marshalShim(in protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
 		}, nil
 	}
 
-	buf, err := marshalReflectMessage(in.Buf, m)
+	buf, err := m.impl.MarshalMessage(in.Buf)
 	return protoiface.MarshalOutput{Buf: buf}, err
 }
 
@@ -397,182 +394,6 @@ func (m *Message) canMarshalRaw() bool {
 		m.impl.Shared.Root == &m.impl &&
 		len(m.impl.Shared.Overlays) == 0 &&
 		m.impl.Shared.Src != nil
-}
-
-var wireTypes = map[protoreflect.Kind]protowire.Type{
-	protoreflect.BoolKind:     protowire.VarintType,
-	protoreflect.EnumKind:     protowire.VarintType,
-	protoreflect.Int32Kind:    protowire.VarintType,
-	protoreflect.Sint32Kind:   protowire.VarintType,
-	protoreflect.Uint32Kind:   protowire.VarintType,
-	protoreflect.Int64Kind:    protowire.VarintType,
-	protoreflect.Sint64Kind:   protowire.VarintType,
-	protoreflect.Uint64Kind:   protowire.VarintType,
-	protoreflect.Sfixed32Kind: protowire.Fixed32Type,
-	protoreflect.Fixed32Kind:  protowire.Fixed32Type,
-	protoreflect.FloatKind:    protowire.Fixed32Type,
-	protoreflect.Sfixed64Kind: protowire.Fixed64Type,
-	protoreflect.Fixed64Kind:  protowire.Fixed64Type,
-	protoreflect.DoubleKind:   protowire.Fixed64Type,
-	protoreflect.StringKind:   protowire.BytesType,
-	protoreflect.BytesKind:    protowire.BytesType,
-	protoreflect.MessageKind:  protowire.BytesType,
-	protoreflect.GroupKind:    protowire.StartGroupType,
-}
-
-func marshalReflectMessage(b []byte, m protoreflect.Message) ([]byte, error) {
-	m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
-		var err error
-		b, err = marshalReflectField(b, fd, v)
-		return err == nil
-	})
-	if len(m.GetUnknown()) > 0 {
-		b = append(b, m.GetUnknown()...)
-	}
-	return b, nil
-}
-
-func marshalReflectField(b []byte, fd protoreflect.FieldDescriptor, value protoreflect.Value) ([]byte, error) {
-	switch {
-	case fd.IsList():
-		return marshalReflectList(b, fd, value.List())
-	case fd.IsMap():
-		return marshalReflectMap(b, fd, value.Map())
-	default:
-		b = protowire.AppendTag(b, fd.Number(), wireTypes[fd.Kind()])
-		return marshalReflectSingular(b, fd, value)
-	}
-}
-
-func marshalReflectList(b []byte, fd protoreflect.FieldDescriptor, list protoreflect.List) ([]byte, error) {
-	if fd.IsPacked() && list.Len() > 0 {
-		b = protowire.AppendTag(b, fd.Number(), protowire.BytesType)
-		b, pos := appendSpeculativeLength(b)
-		for i := range list.Len() {
-			var err error
-			b, err = marshalReflectSingular(b, fd, list.Get(i))
-			if err != nil {
-				return b, err
-			}
-		}
-		b = finishSpeculativeLength(b, pos)
-		return b, nil
-	}
-
-	kind := fd.Kind()
-	for i := range list.Len() {
-		var err error
-		b = protowire.AppendTag(b, fd.Number(), wireTypes[kind])
-		b, err = marshalReflectSingular(b, fd, list.Get(i))
-		if err != nil {
-			return b, err
-		}
-	}
-	return b, nil
-}
-
-func marshalReflectMap(b []byte, fd protoreflect.FieldDescriptor, mapv protoreflect.Map) ([]byte, error) {
-	keyf := fd.MapKey()
-	valf := fd.MapValue()
-	var err error
-	mapv.Range(func(key protoreflect.MapKey, value protoreflect.Value) bool {
-		b = protowire.AppendTag(b, fd.Number(), protowire.BytesType)
-		var pos int
-		b, pos = appendSpeculativeLength(b)
-
-		b, err = marshalReflectField(b, keyf, key.Value())
-		if err != nil {
-			return false
-		}
-		b, err = marshalReflectField(b, valf, value)
-		if err != nil {
-			return false
-		}
-		b = finishSpeculativeLength(b, pos)
-		return true
-	})
-	return b, err
-}
-
-func marshalReflectSingular(b []byte, fd protoreflect.FieldDescriptor, v protoreflect.Value) ([]byte, error) {
-	switch fd.Kind() {
-	case protoreflect.BoolKind:
-		b = protowire.AppendVarint(b, protowire.EncodeBool(v.Bool()))
-	case protoreflect.EnumKind:
-		b = protowire.AppendVarint(b, uint64(v.Enum()))
-	case protoreflect.Int32Kind:
-		b = protowire.AppendVarint(b, uint64(int32(v.Int())))
-	case protoreflect.Sint32Kind:
-		b = protowire.AppendVarint(b, protowire.EncodeZigZag(int64(int32(v.Int()))))
-	case protoreflect.Uint32Kind:
-		b = protowire.AppendVarint(b, uint64(uint32(v.Uint())))
-	case protoreflect.Int64Kind:
-		b = protowire.AppendVarint(b, uint64(v.Int()))
-	case protoreflect.Sint64Kind:
-		b = protowire.AppendVarint(b, protowire.EncodeZigZag(v.Int()))
-	case protoreflect.Uint64Kind:
-		b = protowire.AppendVarint(b, v.Uint())
-	case protoreflect.Sfixed32Kind:
-		b = protowire.AppendFixed32(b, uint32(v.Int()))
-	case protoreflect.Fixed32Kind:
-		b = protowire.AppendFixed32(b, uint32(v.Uint()))
-	case protoreflect.FloatKind:
-		b = protowire.AppendFixed32(b, math.Float32bits(float32(v.Float())))
-	case protoreflect.Sfixed64Kind:
-		b = protowire.AppendFixed64(b, uint64(v.Int()))
-	case protoreflect.Fixed64Kind:
-		b = protowire.AppendFixed64(b, v.Uint())
-	case protoreflect.DoubleKind:
-		b = protowire.AppendFixed64(b, math.Float64bits(v.Float()))
-	case protoreflect.StringKind:
-		if fd.Syntax() == protoreflect.Proto3 && !utf8.ValidString(v.String()) {
-			return b, fmt.Errorf("field %s contains invalid UTF-8", fd.FullName())
-		}
-		b = protowire.AppendString(b, v.String())
-	case protoreflect.BytesKind:
-		b = protowire.AppendBytes(b, v.Bytes())
-	case protoreflect.MessageKind:
-		var pos int
-		var err error
-		b, pos = appendSpeculativeLength(b)
-		b, err = marshalReflectMessage(b, v.Message())
-		if err != nil {
-			return b, err
-		}
-		b = finishSpeculativeLength(b, pos)
-	case protoreflect.GroupKind:
-		var err error
-		b, err = marshalReflectMessage(b, v.Message())
-		if err != nil {
-			return b, err
-		}
-		b = protowire.AppendVarint(b, protowire.EncodeTag(fd.Number(), protowire.EndGroupType))
-	default:
-		return b, fmt.Errorf("invalid kind %v", fd.Kind())
-	}
-	return b, nil
-}
-
-const speculativeLength = 1
-
-func appendSpeculativeLength(b []byte) ([]byte, int) {
-	pos := len(b)
-	b = append(b, "\x00\x00\x00\x00"[:speculativeLength]...)
-	return b, pos
-}
-
-func finishSpeculativeLength(b []byte, pos int) []byte {
-	mlen := len(b) - pos - speculativeLength
-	msiz := protowire.SizeVarint(uint64(mlen))
-	if msiz != speculativeLength {
-		for range msiz - speculativeLength {
-			b = append(b, 0)
-		}
-		copy(b[pos+msiz:], b[pos+speculativeLength:])
-		b = b[:pos+msiz+mlen]
-	}
-	protowire.AppendVarint(b[:pos], uint64(mlen))
-	return b
 }
 
 // requiredShim implements [protoiface.Methods].CheckInitialized.
