@@ -76,6 +76,9 @@ func (m *Message) Range(yield func(protoreflect.FieldDescriptor, protoreflect.Va
 		ov = m.Shared.Overlays[m]
 	}
 
+	// Fast path: if there is no overlay (the message is not mutated), we can directly
+	// iterate over the base fields. We use HasNoAlloc to check presence without
+	// allocating a protoreflect.Value wrapper on the heap.
 	if ov == nil {
 		ty := m.Type()
 		f := ty.ByIndex(0)
@@ -96,6 +99,10 @@ func (m *Message) Range(yield func(protoreflect.FieldDescriptor, protoreflect.Va
 		return
 	}
 
+	// Mutation/overlay path: we must merge fields from overlay maps, fallbacks, and the base message.
+	// To avoid heap allocating a tracking map ("seen") for typical messages (which have few fields),
+	// we use a stack-allocated buffer (seenBuf) for up to 16 elements. If the message has more than
+	// 16 fields, we fall back to allocating a standard map.
 	var seenBuf [16]protoreflect.FieldNumber
 	seen := seenBuf[:0]
 	var seenMap map[protoreflect.FieldNumber]bool
@@ -187,6 +194,8 @@ func (m *Message) HasNoAlloc(fd protoreflect.FieldDescriptor, f *tdp.Field) bool
 		return false
 	}
 
+	// Lists and Maps are reference types, so wrapping them in a protoreflect.Value
+	// interface does not allocate on the heap. We can safely retrieve them via f.Get().
 	if fd.IsList() {
 		v := f.Get(unsafe.Pointer(m))
 		return v.IsValid() && v.List().Len() > 0
@@ -195,16 +204,24 @@ func (m *Message) HasNoAlloc(fd protoreflect.FieldDescriptor, f *tdp.Field) bool
 		v := f.Get(unsafe.Pointer(m))
 		return v.IsValid() && v.Map().Len() > 0
 	}
+
+	// Oneof check: a field is a member of a real oneof only if f.Offset.Number is non-zero
+	// (synthetic oneofs for proto3 optional have f.Offset.Number == 0 and use hasbits instead).
+	// For real oneofs, the active field number of the oneof group is stored at f.Offset.Bit.
 	if od := fd.ContainingOneof(); od != nil && f.Offset.Number != 0 {
 		which := xunsafe.ByteLoad[uint32](m, f.Offset.Bit)
 		return which == uint32(fd.Number())
 	}
+
+	// Message fields: singular message fields are stored as direct pointers. If the pointer
+	// is non-nil, the field is present.
 	if fd.Message() != nil {
 		p := GetField[*Message](m, f.Offset)
 		return p != nil && *p != nil
 	}
 
-	// For optional scalars/strings/bytes (excluding oneofs and messages)
+	// Optional scalar/string/bytes: presence is determined by checking the corresponding
+	// has-bit allocated in the hasbits bitset.
 	if fd.HasPresence() {
 		return m.GetBit(f.Offset.Bit)
 	}

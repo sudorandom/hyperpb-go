@@ -17,6 +17,7 @@ package dynamic
 import (
 	"fmt"
 	"math"
+	"slices"
 	"unicode/utf8"
 	"unsafe"
 
@@ -81,12 +82,7 @@ func (m *Message) MarshalMessage(b []byte) ([]byte, error) {
 		if seenMap != nil {
 			return seenMap[num]
 		}
-		for _, s := range seen {
-			if s == num {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(seen, num)
 	}
 
 	markSeen := func(num protoreflect.FieldNumber) {

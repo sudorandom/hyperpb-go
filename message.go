@@ -157,7 +157,8 @@ func (m *Message) Has(fd protoreflect.FieldDescriptor) bool {
 	return m.impl.Has(fd)
 }
 
-// Clear clears the field, such that it is no longer populated.
+// Clear unsets the specified field. For mutated messages, this removes the field
+// from overlay storage and records it as cleared.
 //
 // Clear implements [protoreflect.Message].
 func (m *Message) Clear(fd protoreflect.FieldDescriptor) {
