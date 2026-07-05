@@ -125,6 +125,34 @@ func TestMutationBasic(t *testing.T) {
 	}
 }
 
+func TestMutationGencodeNested(t *testing.T) {
+	t.Parallel()
+
+	mt, err := protoregistry.GlobalTypes.FindMessageByName("hyperpb.test.Graph")
+	if err != nil {
+		t.Fatalf("failed to find hyperpb.test.Graph: %v", err)
+	}
+
+	fastType := hyperpb.CompileMessageDescriptor(mt.Descriptor())
+	msg := hyperpb.NewMessage(fastType)
+
+	fdS := mt.Descriptor().Fields().ByName("s")
+	fdV := mt.Descriptor().Fields().ByName("v")
+
+	// Create a standard gencode message instance
+	gencodeMsg := mt.New()
+	gencodeMsg.Set(fdV, protoreflect.ValueOfInt32(999))
+
+	// Set the gencode message as a submessage of the hyperpb message
+	msg.Set(fdS, protoreflect.ValueOfMessage(gencodeMsg))
+
+	// Attempt to marshal the hyperpb message containing the nested gencode message
+	_, err = proto.Marshal(msg)
+	if err != nil {
+		t.Fatalf("failed to marshal message with nested gencode: %v", err)
+	}
+}
+
 func TestMutationMaps(t *testing.T) {
 	t.Parallel()
 

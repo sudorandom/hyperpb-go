@@ -780,6 +780,10 @@ func (m *Message) lazyInitOverlay() {
 	}
 }
 
+type unwrappable interface {
+	Unwrap() *Message
+}
+
 func unwrapMessage(pm protoreflect.Message) *Message {
 	if pm == nil {
 		return nil
@@ -788,5 +792,8 @@ func unwrapMessage(pm protoreflect.Message) *Message {
 	if dm, ok := concrete.(*Message); ok {
 		return dm
 	}
-	return (*Message)(unsafe.Pointer(xunsafe.AnyData(concrete)))
+	if uw, ok := concrete.(unwrappable); ok {
+		return uw.Unwrap()
+	}
+	return nil
 }

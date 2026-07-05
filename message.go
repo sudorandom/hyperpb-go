@@ -408,6 +408,10 @@ func wrapMessage(m *dynamic.Message) *Message {
 	return xunsafe.Cast[Message](m)
 }
 
+func (m *Message) Unwrap() *dynamic.Message {
+	return &m.impl
+}
+
 //go:linkname protoReflect buf.build/go/hyperpb/internal/tdp/dynamic.hyperpb_ProtoReflect
 func protoReflect(m *dynamic.Message) protoreflect.Message {
 	return wrapMessage(m)
