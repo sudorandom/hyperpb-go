@@ -151,6 +151,12 @@ func TestMutationGencodeNested(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to marshal message with nested gencode: %v", err)
 	}
+
+	// Calling Mutable on fdS when it holds a non-hyperpb message should safely create a new hyperpb submessage without panicking
+	mutSub := msg.Mutable(fdS)
+	if mutSub.Message() == nil {
+		t.Fatal("expected non-nil submessage from Mutable")
+	}
 }
 
 func TestMutationMaps(t *testing.T) {

@@ -683,10 +683,13 @@ func (m *Message) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 		if m.Has(fd) {
 			origVal := m.Get(fd)
 			origMsg := unwrapMessage(origVal.Message())
-			newMsg = m.Shared.New(origMsg.Type())
-			newMsg.lazyInitOverlay()
-			newMsg.Shared.Overlays[newMsg].Fallback = origMsg
-		} else {
+			if origMsg != nil {
+				newMsg = m.Shared.New(origMsg.Type())
+				newMsg.lazyInitOverlay()
+				newMsg.Shared.Overlays[newMsg].Fallback = origMsg
+			}
+		}
+		if newMsg == nil {
 			f := m.Type().ByDescriptor(fd)
 			var subType *tdp.Type
 			if f != nil && f.Message != nil {
