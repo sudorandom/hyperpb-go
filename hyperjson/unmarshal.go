@@ -916,15 +916,33 @@ func (t *transcoder) listValueContent(out []byte) ([]byte, error) {
 // requires resolving the @type member, which may appear anywhere in the
 // object, so the object is scanned twice.
 func (t *transcoder) anyContent(out []byte) ([]byte, error) {
+	typeURL, payload, err := transcodeAnyPayload(&t.d, t.opts)
+	if err != nil {
+		return nil, err
+	}
+	if typeURL == nil {
+		return out, nil // Empty Any.
+	}
+	out = protowire.AppendTag(out, 1, protowire.BytesType)
+	out = protowire.AppendBytes(out, typeURL)
+	out = protowire.AppendTag(out, 2, protowire.BytesType)
+	out = protowire.AppendBytes(out, payload)
+	return out, nil
+}
+
+// transcodeAnyPayload parses a google.protobuf.Any JSON object, resolving
+// @type and transcoding the payload into a normalized wire-format byte slice.
+// If the object is an empty Any ("{}"), typeURL will be nil with no error.
+func transcodeAnyPayload(d *decoder, opts *UnmarshalOptions) ([]byte, []byte, error) {
 	// First pass: find @type.
-	save := t.d
+	save := *d
 	var typeURL []byte
-	err := t.d.walkObject(func(key []byte) error {
+	err := d.walkObject(func(key []byte) error {
 		if string(key) == "@type" {
 			if typeURL != nil {
-				return t.d.errf("duplicate @type in google.protobuf.Any")
+				return d.errf("duplicate @type in google.protobuf.Any")
 			}
-			s, err := t.d.readString()
+			s, err := d.readString()
 			if err != nil {
 				return err
 			}
@@ -932,76 +950,74 @@ func (t *transcoder) anyContent(out []byte) ([]byte, error) {
 			typeURL = append([]byte(nil), s...)
 			return nil
 		}
-		return t.d.skipValue()
+		return d.skipValue()
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if typeURL == nil {
 		// protojson permits an empty Any as {}.
 		if save.tryConsume('{') && save.tryConsume('}') {
-			return out, nil
+			return nil, nil, nil
 		}
-		return nil, t.d.errf("google.protobuf.Any is missing @type")
+		return nil, nil, d.errf("google.protobuf.Any is missing @type")
 	}
 
-	resolver := t.opts.Resolver
+	resolver := opts.Resolver
 	if resolver == nil {
 		resolver = protoregistry.GlobalTypes
 	}
 	mt, err := resolver.FindMessageByURL(string(typeURL))
 	if err != nil {
-		return nil, t.d.errf("cannot resolve google.protobuf.Any type URL %q: %v", typeURL, err)
+		return nil, nil, d.errf("cannot resolve google.protobuf.Any type URL %q: %v", typeURL, err)
 	}
 	inner := uplanFor(mt.Descriptor())
 
-	out = protowire.AppendTag(out, 1, protowire.BytesType)
-	out = protowire.AppendBytes(out, typeURL)
-
 	// Second pass: rewind and transcode the payload into a detached buffer.
-	t.d = save
-	var payload []byte
+	*d = save
+	tc := transcoderPool.Get().(*transcoder) //nolint:errcheck
+	tc.d = *d
+	tc.opts = opts
+	tc.seen = tc.seen[:0]
 
+	var payload []byte
 	if inner.wkt != wkNone {
 		// Shape: {"@type": ..., "value": <custom JSON>}.
 		var sawValue bool
-		err := t.d.walkObject(func(key []byte) error {
+		err := tc.d.walkObject(func(key []byte) error {
 			switch string(key) {
 			case "@type":
-				return t.d.skipValue()
+				return tc.d.skipValue()
 			case "value":
 				if sawValue {
-					return t.d.errf("duplicate value in google.protobuf.Any")
+					return tc.d.errf("duplicate value in google.protobuf.Any")
 				}
 				sawValue = true
 				var err error
-				payload, err = t.wktContent(inner, payload)
+				payload, err = tc.wktContent(inner, payload)
 				return err
 			default:
-				return t.d.errf("unknown field %q in google.protobuf.Any", key)
+				return tc.d.errf("unknown field %q in google.protobuf.Any", key)
 			}
 		})
-		if err != nil {
-			return nil, err
-		}
-		// google.protobuf.Empty's JSON form is {}, so its "value" member may
-		// be omitted entirely; every other WKT payload requires one.
-		if !sawValue && inner.wkt != wkEmpty {
-			return nil, t.d.errf("google.protobuf.Any of type %q is missing value", typeURL)
+		if err == nil && !sawValue && inner.wkt != wkEmpty {
+			err = tc.d.errf("google.protobuf.Any of type %q is missing value", typeURL)
 		}
 	} else {
-		if payload, err = t.message(inner, payload, true); err != nil {
-			return nil, err
-		}
+		payload, err = tc.message(inner, payload, true)
+	}
+
+	*d = tc.d
+	transcoderPool.Put(tc)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	norm, err := normalizeAnyWire(mt.Descriptor(), payload)
 	if err != nil {
-		return nil, t.d.errf("google.protobuf.Any payload: %v", err)
+		return nil, nil, d.errf("google.protobuf.Any payload: %v", err)
 	}
-	out = protowire.AppendTag(out, 2, protowire.BytesType)
-	out = protowire.AppendBytes(out, norm)
-	return out, nil
+	return typeURL, norm, nil
 }
 
 // normalizeAnyWire re-marshals a transcoded Any payload canonically, the way

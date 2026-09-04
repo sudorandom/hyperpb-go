@@ -205,9 +205,8 @@ func BenchmarkMarshal(b *testing.B) {
 			_, err := proto.Marshal(s.oracle)
 			return err
 		})
-		run("wire/proto_hyperpb_reflect", func() error {
-			// hyperpb has no native serializer; this is generic
-			// reflection-based marshaling over the hyperpb message.
+		run("wire/proto_hyperpb_native", func() error {
+			// Uses hyperpb's native MarshalMessage serializer via proto.Marshal.
 			_, err := proto.Marshal(s.hm)
 			return err
 		})

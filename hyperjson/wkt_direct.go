@@ -18,11 +18,10 @@ import (
 	"strings"
 	"unsafe"
 
-	"google.golang.org/protobuf/reflect/protoregistry"
-
 	"buf.build/go/hyperpb/internal/tdp/dynamic"
 	"buf.build/go/hyperpb/internal/tdp/repeated"
 )
+
 
 // wktValue parses the custom JSON shape of a well-known type directly into
 // its message storage. Because every WKT is structurally made of ordinary
@@ -129,86 +128,15 @@ func (w *writer) wktValue(p *dplan, m *dynamic.Message) error {
 // anyValue parses a google.protobuf.Any: the payload is transcoded to wire
 // format into the appendix, since the value field is bytes.
 func (w *writer) anyValue(p *dplan, m *dynamic.Message) error {
-	// First pass: find @type, which may appear anywhere in the object.
-	save := w.d
-	var typeURL []byte
-	err := w.d.walkObject(func(key []byte) error {
-		if string(key) == "@type" {
-			if typeURL != nil {
-				return w.d.errf("duplicate @type in google.protobuf.Any")
-			}
-			s, err := w.d.readString()
-			if err != nil {
-				return err
-			}
-			typeURL = append([]byte(nil), s...)
-			return nil
-		}
-		return w.d.skipValue()
-	})
+	typeURL, payload, err := transcodeAnyPayload(&w.d, w.opts)
 	if err != nil {
 		return err
 	}
 	if typeURL == nil {
-		if save.tryConsume('{') && save.tryConsume('}') {
-			return nil // Empty Any.
-		}
-		return w.d.errf("google.protobuf.Any is missing @type")
+		return nil // Empty Any.
 	}
-
-	resolver := w.opts.Resolver
-	if resolver == nil {
-		resolver = protoregistry.GlobalTypes
-	}
-	mt, err := resolver.FindMessageByURL(string(typeURL))
-	if err != nil {
-		return w.d.errf("cannot resolve google.protobuf.Any type URL %q: %v", typeURL, err)
-	}
-	inner := uplanFor(mt.Descriptor())
-
 	store(m, &p.byIdx[0], w.append(typeURL))
-
-	// Second pass: rewind and transcode the payload to wire.
-	w.d = save
-	tc := transcoderPool.Get().(*transcoder) //nolint:errcheck
-	tc.d = w.d
-	tc.opts = w.opts
-	tc.seen = tc.seen[:0]
-
-	var wire []byte
-	if inner.wkt != wkNone {
-		var sawValue bool
-		err = tc.d.walkObject(func(key []byte) error {
-			switch string(key) {
-			case "@type":
-				return tc.d.skipValue()
-			case "value":
-				if sawValue {
-					return tc.d.errf("duplicate value in google.protobuf.Any")
-				}
-				sawValue = true
-				var werr error
-				wire, werr = tc.wktContent(inner, wire)
-				return werr
-			default:
-				return tc.d.errf("unknown field %q in google.protobuf.Any", key)
-			}
-		})
-		if err == nil && !sawValue && inner.wkt != wkEmpty {
-			err = tc.d.errf("google.protobuf.Any of type %q is missing value", typeURL)
-		}
-	} else {
-		wire, err = tc.message(inner, wire, true)
-	}
-	w.d = tc.d
-	transcoderPool.Put(tc)
-	if err != nil {
-		return err
-	}
-	norm, err := normalizeAnyWire(mt.Descriptor(), wire)
-	if err != nil {
-		return w.d.errf("google.protobuf.Any payload: %v", err)
-	}
-	store(m, &p.byIdx[1], w.append(norm))
+	store(m, &p.byIdx[1], w.append(payload))
 	return nil
 }
+
