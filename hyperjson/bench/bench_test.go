@@ -179,6 +179,12 @@ func BenchmarkMarshal(b *testing.B) {
 		}
 
 		// JSON producers.
+		dst := make([]byte, 0, len(s.canonical)+64)
+		run("json/hyperjson_append_hyperpb", func() error {
+			var err error
+			_, err = hyperjson.MarshalAppend(dst[:0], s.hm)
+			return err
+		})
 		run("json/hyperjson_hyperpb", func() error {
 			_, err := hyperjson.Marshal(s.hm)
 			return err

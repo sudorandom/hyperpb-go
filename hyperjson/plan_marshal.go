@@ -397,12 +397,13 @@ func (m *marshaler) fastMap(pf *mfield, mp protoreflect.Map) error {
 	var err error
 	switch pf.keyClass {
 	case mcString:
-		buf := strEntryPool.Get().(*[]strEntry) //nolint:errcheck
-		entries := (*buf)[:0]
+		pbuf := strEntryPool.Get().(*[]strEntry) //nolint:errcheck
+		*pbuf = (*pbuf)[:0]
 		mp.Range(func(k protoreflect.MapKey, v protoreflect.Value) bool {
-			entries = append(entries, strEntry{rawString(k.Value()), v})
+			*pbuf = append(*pbuf, strEntry{rawString(k.Value()), v})
 			return true
 		})
+		entries := *pbuf
 		slices.SortFunc(entries, func(a, b strEntry) int { return strings.Compare(a.k, b.k) })
 		for i := range entries {
 			if i > 0 {
@@ -411,13 +412,11 @@ func (m *marshaler) fastMap(pf *mfield, mp protoreflect.Map) error {
 			e.str(entries[i].k)
 			e.rawByte(':')
 			if err = m.fastScalar(pf.valKind, pf.valEnums, entries[i].v); err != nil {
-				*buf = entries
-				strEntryPool.Put(buf)
+				strEntryPool.Put(pbuf)
 				return err
 			}
 		}
-		*buf = entries
-		strEntryPool.Put(buf)
+		strEntryPool.Put(pbuf)
 
 	case mcBool:
 		var fv, tv protoreflect.Value
@@ -445,8 +444,8 @@ func (m *marshaler) fastMap(pf *mfield, mp protoreflect.Map) error {
 		}
 
 	default: // mcInt, mcUint
-		buf := intEntryPool.Get().(*[]intEntry) //nolint:errcheck
-		entries := (*buf)[:0]
+		pbuf := intEntryPool.Get().(*[]intEntry) //nolint:errcheck
+		*pbuf = (*pbuf)[:0]
 		isUint := pf.keyClass == mcUint
 		mp.Range(func(k protoreflect.MapKey, v protoreflect.Value) bool {
 			var keyVal int64
@@ -455,9 +454,10 @@ func (m *marshaler) fastMap(pf *mfield, mp protoreflect.Map) error {
 			} else {
 				keyVal = k.Int()
 			}
-			entries = append(entries, intEntry{keyVal, v})
+			*pbuf = append(*pbuf, intEntry{keyVal, v})
 			return true
 		})
+		entries := *pbuf
 		slices.SortFunc(entries, func(a, b intEntry) int {
 			ak, bk := a.k, b.k
 			if isUint {
@@ -485,13 +485,11 @@ func (m *marshaler) fastMap(pf *mfield, mp protoreflect.Map) error {
 			}
 			e.raw(`":`)
 			if err = m.fastScalar(pf.valKind, pf.valEnums, entries[i].v); err != nil {
-				*buf = entries
-				intEntryPool.Put(buf)
+				intEntryPool.Put(pbuf)
 				return err
 			}
 		}
-		*buf = entries
-		intEntryPool.Put(buf)
+		intEntryPool.Put(pbuf)
 	}
 	e.rawByte('}')
 	return nil

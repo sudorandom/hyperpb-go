@@ -56,7 +56,7 @@ func ValueOfScalar(v any) protoreflect.Value {
 	case protoreflect.EnumNumber:
 		return protoreflect.ValueOfEnum(v)
 	default:
-		panic(fmt.Sprintf("invalid type: %T", v))
+		panic("hyperpb: invalid scalar type")
 	}
 }
 

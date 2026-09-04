@@ -82,6 +82,15 @@ func roundTrip(t *testing.T, md protoreflect.MessageDescriptor, jsonIn string) {
 	got, err := hyperjson.Marshal(hm)
 	require.NoError(t, err, "hyperjson.Marshal")
 
+	gotAppend, err := hyperjson.MarshalAppend(nil, hm)
+	require.NoError(t, err, "hyperjson.MarshalAppend")
+	assert.Equal(t, got, gotAppend, "Marshal and MarshalAppend output must match")
+
+	prefix := []byte("prefix:")
+	gotPrefix, err := hyperjson.MarshalAppend(prefix, hm)
+	require.NoError(t, err, "hyperjson.MarshalAppend with prefix")
+	assert.Equal(t, string(append(prefix, got...)), string(gotPrefix))
+
 	check := newDyn()
 	require.NoError(t, protojson.Unmarshal(got, check), "hyperjson.Marshal output must be valid protojson: %s", got)
 	assert.True(t, proto.Equal(oracle, check), "marshal mismatch:\n  hyperjson: %s\n  protojson: %s", got, mustProtojson(t, oracle))

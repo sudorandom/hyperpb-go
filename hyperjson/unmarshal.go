@@ -65,12 +65,11 @@ func (o UnmarshalOptions) Unmarshal(data []byte, msg *hyperpb.Message) error {
 }
 
 // transcodeUnmarshal is the JSON-to-wire fallback used when the direct
-
 // writer does not support the message's shape.
 func (o UnmarshalOptions) transcodeUnmarshal(data []byte, msg *hyperpb.Message) error {
 	t := transcoderPool.Get().(*transcoder) //nolint:errcheck
 	t.d = decoder{data: data}
-	t.opts = &o
+	t.opts = o
 	t.seen = t.seen[:0]
 	defer transcoderPool.Put(t)
 
@@ -104,7 +103,7 @@ func (o UnmarshalOptions) transcodeUnmarshal(data []byte, msg *hyperpb.Message) 
 
 type transcoder struct {
 	d    decoder
-	opts *UnmarshalOptions
+	opts UnmarshalOptions
 
 	// seen is a stack of duplicate/oneof-detection bitsets, one window per
 	// in-progress message. Windows are addressed by base index because the
@@ -934,7 +933,7 @@ func (t *transcoder) anyContent(out []byte) ([]byte, error) {
 // transcodeAnyPayload parses a google.protobuf.Any JSON object, resolving
 // @type and transcoding the payload into a normalized wire-format byte slice.
 // If the object is an empty Any ("{}"), typeURL will be nil with no error.
-func transcodeAnyPayload(d *decoder, opts *UnmarshalOptions) ([]byte, []byte, error) {
+func transcodeAnyPayload(d *decoder, opts UnmarshalOptions) ([]byte, []byte, error) {
 	// First pass: find @type.
 	save := *d
 	var typeURL []byte

@@ -53,16 +53,45 @@ func Marshal(msg *hyperpb.Message) ([]byte, error) {
 	return MarshalOptions{}.Marshal(msg)
 }
 
+// MarshalAppend appends the protojson-compatible JSON serialization of msg to dst.
+func MarshalAppend(dst []byte, msg *hyperpb.Message) ([]byte, error) {
+	return MarshalOptions{}.MarshalAppend(dst, msg)
+}
+
 // Marshal serializes a hyperpb message to protojson-compatible JSON.
 func (o MarshalOptions) Marshal(msg *hyperpb.Message) ([]byte, error) {
-	e := getEncoder()
-	defer putEncoder(e)
-
-	m := &marshaler{e: e, opts: &o}
+	m := marshalerPool.Get().(*marshaler)
+	m.opts = o
+	m.e.buf = m.e.buf[:0]
 	if err := m.msgValue(msg); err != nil {
+		if cap(m.e.buf) <= 1<<20 {
+			marshalerPool.Put(m)
+		}
 		return nil, err
 	}
-	return e.bytes(), nil
+	out := m.e.bytes()
+	if cap(m.e.buf) <= 1<<20 {
+		marshalerPool.Put(m)
+	}
+	return out, nil
+}
+
+// MarshalAppend appends the protojson-compatible JSON serialization of msg to dst.
+func (o MarshalOptions) MarshalAppend(dst []byte, msg *hyperpb.Message) ([]byte, error) {
+	m := marshalerPool.Get().(*marshaler)
+	m.opts = o
+	m.e.buf = m.e.buf[:0]
+	if err := m.msgValue(msg); err != nil {
+		if cap(m.e.buf) <= 1<<20 {
+			marshalerPool.Put(m)
+		}
+		return nil, err
+	}
+	dst = append(dst, m.e.buf...)
+	if cap(m.e.buf) <= 1<<20 {
+		marshalerPool.Put(m)
+	}
+	return dst, nil
 }
 
 // unwrapMessage converts the public message wrapper to its internal
@@ -73,7 +102,15 @@ func unwrapMessage(m *hyperpb.Message) *dynamic.Message {
 
 type marshaler struct {
 	e    *encoder
-	opts *MarshalOptions
+	opts MarshalOptions
+}
+
+var marshalerPool = sync.Pool{
+	New: func() any {
+		return &marshaler{
+			e: &encoder{buf: make([]byte, 0, 1024)},
+		}
+	},
 }
 
 // msgValue marshals any message value, dispatching between the compiled-plan

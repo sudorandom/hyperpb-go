@@ -18,29 +18,12 @@ import (
 	"encoding/base64"
 	"math"
 	"strconv"
-	"sync"
 	"unicode/utf8"
 )
 
 // encoder appends protojson-formatted output into a pooled buffer.
 type encoder struct {
 	buf []byte
-}
-
-var encoderPool = sync.Pool{
-	New: func() any { return &encoder{buf: make([]byte, 0, 1024)} },
-}
-
-func getEncoder() *encoder {
-	return encoderPool.Get().(*encoder) //nolint:errcheck // pool is homogeneous
-}
-
-func putEncoder(e *encoder) {
-	if cap(e.buf) > 1<<20 {
-		return // Don't retain giant buffers.
-	}
-	e.buf = e.buf[:0]
-	encoderPool.Put(e)
 }
 
 // bytes returns an owned copy of the encoded output.

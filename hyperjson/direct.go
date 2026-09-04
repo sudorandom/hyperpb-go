@@ -50,7 +50,7 @@ import (
 
 type writer struct {
 	d    decoder
-	opts *UnmarshalOptions
+	opts UnmarshalOptions
 
 	shared *dynamic.Shared
 	arena  *arena.Arena
@@ -70,7 +70,7 @@ var writerPool = sync.Pool{New: func() any { return new(writer) }}
 
 // directUnmarshal parses data into m without a wire intermediate. checkInit
 // runs the required-field check on the wrapped message.
-func (o *UnmarshalOptions) directUnmarshal(p *dplan, data []byte, m *dynamic.Message, checkInit func() error) error {
+func (o UnmarshalOptions) directUnmarshal(p *dplan, data []byte, m *dynamic.Message, checkInit func() error) error {
 	w := writerPool.Get().(*writer) //nolint:errcheck
 	defer writerPool.Put(w)
 	w.d = decoder{data: data}
