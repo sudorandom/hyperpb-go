@@ -64,3 +64,12 @@ func TestPC(t *testing.T) {
 	t.Logf("%#x\n", pc)
 	assert.Equal(t, 42, pc.Get()())
 }
+
+// AssertInlinedAny is a helper for testing that T does not allocate when
+// converted to an interface.
+func AssertInlinedAny[T any](t testing.TB) {
+	t.Helper()
+	var z T
+	assert.True(t, xunsafe.IsDirect[T](), "expected %T to be pointer-shaped", z)
+}
+

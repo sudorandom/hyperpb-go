@@ -225,57 +225,16 @@ func classifyD(df *dfield, fd protoreflect.FieldDescriptor, f *tdp.Field, built 
 // key/value pseudo-fields, which have no offset or presence of their own).
 func classifyDScalar(df *dfield, fd protoreflect.FieldDescriptor, f *tdp.Field, built map[*tdp.Type]*dplan) {
 	df.fd = fd
+	df.class, _ = classifyKind(fd.Kind())
 	switch fd.Kind() {
-	case protoreflect.BoolKind:
-		df.class = ucBool
-	case protoreflect.Int32Kind:
-		df.class = ucInt32
-	case protoreflect.Sint32Kind:
-		df.class = ucSint32
-	case protoreflect.Sfixed32Kind:
-		df.class = ucSfixed32
-	case protoreflect.Int64Kind:
-		df.class = ucInt64
-	case protoreflect.Sint64Kind:
-		df.class = ucSint64
-	case protoreflect.Sfixed64Kind:
-		df.class = ucSfixed64
-	case protoreflect.Uint32Kind:
-		df.class = ucUint32
-	case protoreflect.Fixed32Kind:
-		df.class = ucFixed32
-	case protoreflect.Uint64Kind:
-		df.class = ucUint64
-	case protoreflect.Fixed64Kind:
-		df.class = ucFixed64
-	case protoreflect.FloatKind:
-		df.class = ucFloat
-	case protoreflect.DoubleKind:
-		df.class = ucDouble
-	case protoreflect.StringKind:
-		df.class = ucString
-	case protoreflect.BytesKind:
-		df.class = ucBytes
 	case protoreflect.EnumKind:
-		df.class = ucEnum
-		ed := fd.Enum()
-		if ed.FullName() == wktNullValue {
-			df.nullEnum = true
-			df.allowsNull = !fd.IsList() && !fd.IsMap()
-		}
-		vals := ed.Values()
-		df.enums = make(map[string]protoreflect.EnumNumber, vals.Len())
-		for i := range vals.Len() {
-			vd := vals.Get(i)
-			df.enums[string(vd.Name())] = vd.Number()
-		}
+		df.nullEnum, df.allowsNull = isNullEnum(fd)
+		df.enums = buildEnumMap(fd.Enum())
 	case protoreflect.GroupKind:
-		df.class = ucGroup
 		df.subTy = f.Message
 		df.sub = buildDPlan(f.Message, built)
 		df.wkt = df.sub.wkt
-	default: // MessageKind
-		df.class = ucMessage
+	case protoreflect.MessageKind:
 		df.subTy = f.Message
 		if f.Message != nil {
 			df.sub = buildDPlan(f.Message, built)
@@ -284,6 +243,7 @@ func classifyDScalar(df *dfield, fd protoreflect.FieldDescriptor, f *tdp.Field, 
 		}
 	}
 }
+
 
 // supportedD reports whether the direct writer handles this field shape.
 func supportedD(df *dfield) bool {

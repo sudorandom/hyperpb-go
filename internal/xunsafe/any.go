@@ -16,13 +16,11 @@ package xunsafe
 
 import (
 	"reflect"
-	"testing"
 	"unsafe"
-
-	"github.com/stretchr/testify/assert"
 
 	"buf.build/go/hyperpb/internal/xsync"
 )
+
 
 var isDirectMap xsync.Map[reflect.Type, bool]
 
@@ -117,10 +115,3 @@ func IsDirect[T any]() bool {
 	return p == nil
 }
 
-// AssertInlinedAny is a helper for testing that T does not allocate when
-// converted to an interface.
-func AssertInlinedAny[T any](t testing.TB) {
-	t.Helper()
-	var z T
-	assert.True(t, IsDirect[T](), "expected %T to be pointer-shaped", z)
-}

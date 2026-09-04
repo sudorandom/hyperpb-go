@@ -29,8 +29,8 @@ import (
 	"math/bits"
 	"math/rand/v2"
 	"strings"
-	"testing"
 	"unsafe"
+
 
 	"buf.build/go/hyperpb/internal/debug"
 	"buf.build/go/hyperpb/internal/stats"
@@ -320,11 +320,18 @@ func (m *Metrics) Reset() {
 	*m = Metrics{}
 }
 
+// BenchmarkReporter records benchmark metrics without importing testing.
+type BenchmarkReporter interface {
+	Helper()
+	ReportMetric(n float64, unit string)
+}
+
 // Report reports metrics to a benchmark.
-func (m *Metrics) Report(b *testing.B) {
+func (m *Metrics) Report(b BenchmarkReporter) {
 	b.Helper()
 	b.ReportMetric(m.Probes.Get(), "probes/seq")
 }
+
 
 // Merge merges each metric in that into m.
 func (m *Metrics) Merge(that *Metrics) {

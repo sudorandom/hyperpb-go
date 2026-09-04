@@ -58,8 +58,69 @@ const (
 	wkWrapper
 )
 
+// classifyKind maps a descriptor kind to its value class and default wire type.
+func classifyKind(k protoreflect.Kind) (uint8, protowire.Type) {
+	switch k {
+	case protoreflect.BoolKind:
+		return ucBool, protowire.VarintType
+	case protoreflect.Int32Kind:
+		return ucInt32, protowire.VarintType
+	case protoreflect.Sint32Kind:
+		return ucSint32, protowire.VarintType
+	case protoreflect.Sfixed32Kind:
+		return ucSfixed32, protowire.Fixed32Type
+	case protoreflect.Int64Kind:
+		return ucInt64, protowire.VarintType
+	case protoreflect.Sint64Kind:
+		return ucSint64, protowire.VarintType
+	case protoreflect.Sfixed64Kind:
+		return ucSfixed64, protowire.Fixed64Type
+	case protoreflect.Uint32Kind:
+		return ucUint32, protowire.VarintType
+	case protoreflect.Fixed32Kind:
+		return ucFixed32, protowire.Fixed32Type
+	case protoreflect.Uint64Kind:
+		return ucUint64, protowire.VarintType
+	case protoreflect.Fixed64Kind:
+		return ucFixed64, protowire.Fixed64Type
+	case protoreflect.FloatKind:
+		return ucFloat, protowire.Fixed32Type
+	case protoreflect.DoubleKind:
+		return ucDouble, protowire.Fixed64Type
+	case protoreflect.StringKind:
+		return ucString, protowire.BytesType
+	case protoreflect.BytesKind:
+		return ucBytes, protowire.BytesType
+	case protoreflect.EnumKind:
+		return ucEnum, protowire.VarintType
+	case protoreflect.GroupKind:
+		return ucGroup, protowire.StartGroupType
+	default: // MessageKind
+		return ucMessage, protowire.BytesType
+	}
+}
+
+func buildEnumMap(ed protoreflect.EnumDescriptor) map[string]protoreflect.EnumNumber {
+	vals := ed.Values()
+	enums := make(map[string]protoreflect.EnumNumber, vals.Len())
+	for i := range vals.Len() {
+		vd := vals.Get(i)
+		enums[string(vd.Name())] = vd.Number()
+	}
+	return enums
+}
+
+func isNullEnum(fd protoreflect.FieldDescriptor) (nullEnum bool, allowsNull bool) {
+	ed := fd.Enum()
+	if ed.FullName() == wktNullValue {
+		return true, !fd.IsList() && !fd.IsMap()
+	}
+	return false, false
+}
+
 // ufield is one field of a compiled unmarshal plan.
 type ufield struct {
+
 	class uint8
 	wkt   uint8 // for ucMessage/ucGroup: the submessage's WKT code
 
@@ -223,56 +284,15 @@ func classifyU(fd protoreflect.FieldDescriptor, built map[protoreflect.MessageDe
 	}
 
 	var wire protowire.Type
+	uf.class, wire = classifyKind(fd.Kind())
 	switch fd.Kind() {
-	case protoreflect.BoolKind:
-		uf.class, wire = ucBool, protowire.VarintType
-	case protoreflect.Int32Kind:
-		uf.class, wire = ucInt32, protowire.VarintType
-	case protoreflect.Sint32Kind:
-		uf.class, wire = ucSint32, protowire.VarintType
-	case protoreflect.Sfixed32Kind:
-		uf.class, wire = ucSfixed32, protowire.Fixed32Type
-	case protoreflect.Int64Kind:
-		uf.class, wire = ucInt64, protowire.VarintType
-	case protoreflect.Sint64Kind:
-		uf.class, wire = ucSint64, protowire.VarintType
-	case protoreflect.Sfixed64Kind:
-		uf.class, wire = ucSfixed64, protowire.Fixed64Type
-	case protoreflect.Uint32Kind:
-		uf.class, wire = ucUint32, protowire.VarintType
-	case protoreflect.Fixed32Kind:
-		uf.class, wire = ucFixed32, protowire.Fixed32Type
-	case protoreflect.Uint64Kind:
-		uf.class, wire = ucUint64, protowire.VarintType
-	case protoreflect.Fixed64Kind:
-		uf.class, wire = ucFixed64, protowire.Fixed64Type
-	case protoreflect.FloatKind:
-		uf.class, wire = ucFloat, protowire.Fixed32Type
-	case protoreflect.DoubleKind:
-		uf.class, wire = ucDouble, protowire.Fixed64Type
-	case protoreflect.StringKind:
-		uf.class, wire = ucString, protowire.BytesType
-	case protoreflect.BytesKind:
-		uf.class, wire = ucBytes, protowire.BytesType
 	case protoreflect.EnumKind:
-		uf.class, wire = ucEnum, protowire.VarintType
-		ed := fd.Enum()
-		if ed.FullName() == wktNullValue {
-			uf.nullEnum = true
-			uf.allowsNull = !uf.isList
-		}
-		vals := ed.Values()
-		uf.enums = make(map[string]protoreflect.EnumNumber, vals.Len())
-		for i := range vals.Len() {
-			vd := vals.Get(i)
-			uf.enums[string(vd.Name())] = vd.Number()
-		}
+		uf.nullEnum, uf.allowsNull = isNullEnum(fd)
+		uf.enums = buildEnumMap(fd.Enum())
 	case protoreflect.GroupKind:
-		uf.class, wire = ucGroup, protowire.StartGroupType
 		uf.sub = buildUPlan(fd.Message(), built)
 		uf.wkt = uf.sub.wkt
-	default: // MessageKind
-		uf.class, wire = ucMessage, protowire.BytesType
+	case protoreflect.MessageKind:
 		uf.sub = buildUPlan(fd.Message(), built)
 		uf.wkt = uf.sub.wkt
 		uf.allowsNull = uf.wkt == wkValue && !uf.isList
@@ -280,3 +300,4 @@ func classifyU(fd protoreflect.FieldDescriptor, built map[protoreflect.MessageDe
 	uf.tag = uint64(protowire.EncodeTag(uf.num, wire))
 	return uf
 }
+

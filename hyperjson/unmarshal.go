@@ -65,6 +65,7 @@ func (o UnmarshalOptions) Unmarshal(data []byte, msg *hyperpb.Message) error {
 }
 
 // transcodeUnmarshal is the JSON-to-wire fallback used when the direct
+
 // writer does not support the message's shape.
 func (o UnmarshalOptions) transcodeUnmarshal(data []byte, msg *hyperpb.Message) error {
 	t := transcoderPool.Get().(*transcoder) //nolint:errcheck
