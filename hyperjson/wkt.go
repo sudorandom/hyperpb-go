@@ -45,30 +45,55 @@ const (
 	wktNullValue   = "google.protobuf.NullValue"
 )
 
-// isCustomWKT reports whether the message type has a custom protojson shape.
-func isCustomWKT(name protoreflect.FullName) bool {
-	if !strings.HasPrefix(string(name), "google.protobuf.") {
-		return false
-	}
-	switch string(name) {
-	case wktAny, wktTimestamp, wktDuration, wktStruct, wktValue, wktListValue,
-		wktFieldMask, wktEmpty, wktBoolValue, wktInt32Value, wktInt64Value,
-		wktUInt32Value, wktUInt64Value, wktFloatValue, wktDoubleValue,
-		wktStringValue, wktBytesValue:
-		return true
-	}
-	return false
-}
+// Well-known-type codes.
+const (
+	wkNone = iota
+	wkTimestamp
+	wkDuration
+	wkEmpty
+	wkStruct
+	wkValue
+	wkListValue
+	wkFieldMask
+	wkAny
+	wkWrapper
+)
 
-// isWrapper reports whether name is one of the wrapperspb types.
-func isWrapper(name protoreflect.FullName) bool {
+// wktCode maps a full message name to its custom-shape code, or wkNone if it
+// has a standard message layout.
+func wktCode(name protoreflect.FullName) uint8 {
+	if !strings.HasPrefix(string(name), "google.protobuf.") {
+		return wkNone
+	}
 	switch string(name) {
+	case wktTimestamp:
+		return wkTimestamp
+	case wktDuration:
+		return wkDuration
+	case wktEmpty:
+		return wkEmpty
+	case wktStruct:
+		return wkStruct
+	case wktValue:
+		return wkValue
+	case wktListValue:
+		return wkListValue
+	case wktFieldMask:
+		return wkFieldMask
+	case wktAny:
+		return wkAny
 	case wktBoolValue, wktInt32Value, wktInt64Value, wktUInt32Value,
 		wktUInt64Value, wktFloatValue, wktDoubleValue, wktStringValue,
 		wktBytesValue:
-		return true
+		return wkWrapper
+	default:
+		return wkNone
 	}
-	return false
+}
+
+// isCustomWKT reports whether the message type has a custom protojson shape.
+func isCustomWKT(name protoreflect.FullName) bool {
+	return wktCode(name) != wkNone
 }
 
 // Timestamp bounds: 0001-01-01T00:00:00Z .. 9999-12-31T23:59:59.999999999Z.

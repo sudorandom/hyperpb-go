@@ -100,40 +100,8 @@ func (m *Message) Range(yield func(protoreflect.FieldDescriptor, protoreflect.Va
 	}
 
 	// Mutation/overlay path: we must merge fields from overlay maps, fallbacks, and the base message.
-	// To avoid heap allocating a tracking map ("seen") for typical messages (which have few fields),
-	// we use a stack-allocated buffer (seenBuf) for up to 16 elements. If the message has more than
-	// 16 fields, we fall back to allocating a standard map.
-	var seenBuf [16]protoreflect.FieldNumber
-	seen := seenBuf[:0]
-	var seenMap map[protoreflect.FieldNumber]bool
-
-	isSeen := func(num protoreflect.FieldNumber) bool {
-		if seenMap != nil {
-			return seenMap[num]
-		}
-		for _, s := range seen {
-			if s == num {
-				return true
-			}
-		}
-		return false
-	}
-
-	markSeen := func(num protoreflect.FieldNumber) {
-		if seenMap != nil {
-			seenMap[num] = true
-			return
-		}
-		if len(seen) < 16 {
-			seen = append(seen, num)
-		} else {
-			seenMap = make(map[protoreflect.FieldNumber]bool)
-			for _, s := range seen {
-				seenMap[s] = true
-			}
-			seenMap[num] = true
-		}
-	}
+	var seen fieldSet
+	seen.init()
 
 	// Yield overlay fields
 	for _, val := range ov.Fields {
@@ -142,7 +110,7 @@ func (m *Message) Range(yield func(protoreflect.FieldDescriptor, protoreflect.Va
 			continue
 		}
 		if m.Has(fd) {
-			markSeen(fd.Number())
+			seen.add(fd.Number())
 			if !yield(fd, val.val) {
 				return
 			}
@@ -153,10 +121,10 @@ func (m *Message) Range(yield func(protoreflect.FieldDescriptor, protoreflect.Va
 	if ov.Fallback != nil {
 		keepYielding := true
 		ov.Fallback.Range(func(fd protoreflect.FieldDescriptor, val protoreflect.Value) bool {
-			if isSeen(fd.Number()) || ov.Cleared[fd.Number()] {
+			if seen.has(fd.Number()) || ov.Cleared[fd.Number()] {
 				return true
 			}
-			markSeen(fd.Number())
+			seen.add(fd.Number())
 			keepYielding = yield(fd, val)
 			return keepYielding
 		})
@@ -172,7 +140,7 @@ func (m *Message) Range(yield func(protoreflect.FieldDescriptor, protoreflect.Va
 	i := 0
 	for f.IsValid() {
 		fd := ty.FieldDescriptors[i]
-		if !isSeen(fd.Number()) && (cleared == nil || !cleared[fd.Number()]) {
+		if !seen.has(fd.Number()) && (cleared == nil || !cleared[fd.Number()]) {
 			if m.HasNoAlloc(fd, f) {
 				val := f.Get(unsafe.Pointer(m))
 				if val.IsValid() {
@@ -635,6 +603,13 @@ func (m *Message) Clear(fd protoreflect.FieldDescriptor) {
 	ov.Cleared[fd.Number()] = true
 }
 
+func (m *Message) subType(fd protoreflect.FieldDescriptor) *tdp.Type {
+	if f := m.Type().ByDescriptor(fd); f.IsValid() {
+		return f.Message
+	}
+	return nil
+}
+
 func (m *Message) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	if m.Shared == nil {
 		panic("cannot mutate invalid/nil message")
@@ -651,13 +626,7 @@ func (m *Message) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 		if m.Has(fd) {
 			fallback = m.Get(fd).List()
 		}
-		f := m.Type().ByDescriptor(fd)
-		var subType *tdp.Type
-		if f != nil && f.Message != nil {
-			subType = f.Message
-		}
-		lst := newCowList(fallback, fd, m.Shared, subType)
-		val := protoreflect.ValueOfList(lst)
+		val := protoreflect.ValueOfList(newCowList(fallback, fd, m.Shared, m.subType(fd)))
 		m.Set(fd, val)
 		return val
 	}
@@ -667,13 +636,7 @@ func (m *Message) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 		if m.Has(fd) {
 			fallback = m.Get(fd).Map()
 		}
-		f := m.Type().ByDescriptor(fd)
-		var valType *tdp.Type
-		if f != nil && f.Message != nil {
-			valType = f.Message
-		}
-		mp := newCowMap(fallback, fd, m.Shared, valType)
-		val := protoreflect.ValueOfMap(mp)
+		val := protoreflect.ValueOfMap(newCowMap(fallback, fd, m.Shared, m.subType(fd)))
 		m.Set(fd, val)
 		return val
 	}
@@ -690,12 +653,7 @@ func (m *Message) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 			}
 		}
 		if newMsg == nil {
-			f := m.Type().ByDescriptor(fd)
-			var subType *tdp.Type
-			if f != nil && f.Message != nil {
-				subType = f.Message
-			}
-			newMsg = m.Shared.New(resolveType(m.Shared, subType, fd.Message()))
+			newMsg = m.Shared.New(resolveType(m.Shared, m.subType(fd), fd.Message()))
 		}
 		val := protoreflect.ValueOfMessage(newMsg.ProtoReflect())
 		m.Set(fd, val)
@@ -710,29 +668,13 @@ func (m *Message) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 		panic("cannot mutate invalid/nil message")
 	}
 	if fd.IsList() {
-		f := m.Type().ByDescriptor(fd)
-		var subType *tdp.Type
-		if f != nil && f.Message != nil {
-			subType = f.Message
-		}
-		return protoreflect.ValueOfList(newCowList(nil, fd, m.Shared, subType))
+		return protoreflect.ValueOfList(newCowList(nil, fd, m.Shared, m.subType(fd)))
 	}
 	if fd.IsMap() {
-		f := m.Type().ByDescriptor(fd)
-		var valType *tdp.Type
-		if f != nil && f.Message != nil {
-			valType = f.Message
-		}
-		return protoreflect.ValueOfMap(newCowMap(nil, fd, m.Shared, valType))
+		return protoreflect.ValueOfMap(newCowMap(nil, fd, m.Shared, m.subType(fd)))
 	}
 	if fd.Message() != nil {
-		f := m.Type().ByDescriptor(fd)
-		var subType *tdp.Type
-		if f != nil && f.Message != nil {
-			subType = f.Message
-		}
-		newMsg := m.Shared.New(resolveType(m.Shared, subType, fd.Message()))
-		return protoreflect.ValueOfMessage(newMsg.ProtoReflect())
+		return newMessageValue(m.Shared, m.subType(fd), fd.Message())
 	}
 	return fd.Default()
 }

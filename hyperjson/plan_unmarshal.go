@@ -44,20 +44,6 @@ const (
 	ucGroup
 )
 
-// Well-known-type codes.
-const (
-	wkNone = iota
-	wkTimestamp
-	wkDuration
-	wkEmpty
-	wkStruct
-	wkValue
-	wkListValue
-	wkFieldMask
-	wkAny
-	wkWrapper
-)
-
 // classifyKind maps a descriptor kind to its value class and default wire type.
 func classifyKind(k protoreflect.Kind) (uint8, protowire.Type) {
 	switch k {
@@ -238,33 +224,6 @@ func buildUPlan(md protoreflect.MessageDescriptor, built map[protoreflect.Messag
 		p.wrapped = p.byName["value"]
 	}
 	return p
-}
-
-// wktCode maps a full name to its custom-shape code.
-func wktCode(name protoreflect.FullName) uint8 {
-	if !isCustomWKT(name) {
-		return wkNone
-	}
-	switch string(name) {
-	case wktTimestamp:
-		return wkTimestamp
-	case wktDuration:
-		return wkDuration
-	case wktEmpty:
-		return wkEmpty
-	case wktStruct:
-		return wkStruct
-	case wktValue:
-		return wkValue
-	case wktListValue:
-		return wkListValue
-	case wktFieldMask:
-		return wkFieldMask
-	case wktAny:
-		return wkAny
-	default:
-		return wkWrapper
-	}
 }
 
 // classifyU builds a ufield for one descriptor (also used for extensions and

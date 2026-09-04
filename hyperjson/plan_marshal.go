@@ -247,7 +247,7 @@ func (m *marshaler) fastMessage(dm *dynamic.Message) error {
 	// bypass; marshal it through the overlay-aware reflection surface
 	// instead. Clean messages (the overwhelmingly common case) pay one nil
 	// map check.
-	if dm.Shared.Overlays != nil {
+	if dm.Shared != nil && dm.Shared.Overlays != nil {
 		if _, ok := dm.Shared.Overlays[dm]; ok {
 			return m.overlayMessage(dm.ProtoReflect())
 		}
@@ -261,7 +261,17 @@ func (m *marshaler) fastMessage(dm *dynamic.Message) error {
 
 	e := m.e
 	e.rawByte('{')
-	first := true
+	if _, err := m.planFields(dm, p, true); err != nil {
+		return err
+	}
+	e.rawByte('}')
+	return nil
+}
+
+// planFields writes the fields of a message using its compiled plan.
+func (m *marshaler) planFields(dm *dynamic.Message, p *mplan, first bool) (bool, error) {
+	e := m.e
+	ty := dm.Type()
 	f := ty.ByIndex(0)
 	for i := range p.fields {
 		pf := &p.fields[i]
@@ -294,7 +304,7 @@ func (m *marshaler) fastMessage(dm *dynamic.Message) error {
 					e.rawByte(',')
 				}
 				if err := m.fastScalar(pf.kind, pf.enums, list.Get(j)); err != nil {
-					return err
+					return first, err
 				}
 			}
 			e.rawByte(']')
@@ -306,7 +316,7 @@ func (m *marshaler) fastMessage(dm *dynamic.Message) error {
 			}
 			first = m.member(pf, first)
 			if err := m.fastMap(pf, mp); err != nil {
-				return err
+				return first, err
 			}
 
 		default:
@@ -317,15 +327,15 @@ func (m *marshaler) fastMessage(dm *dynamic.Message) error {
 			}
 			first = m.member(pf, first)
 			if err := m.fastScalar(pf.kind, pf.enums, v); err != nil {
-				return err
+				return first, err
 			}
 		}
 	}
-	e.rawByte('}')
-	return nil
+	return first, nil
 }
 
 // member emits the pre-rendered `,"name":` prefix, dropping the comma for
+
 // the first member.
 func (m *marshaler) member(pf *mfield, first bool) bool {
 	if first {

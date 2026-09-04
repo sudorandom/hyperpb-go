@@ -17,7 +17,6 @@ package dynamic
 import (
 	"fmt"
 	"math"
-	"slices"
 	"unicode/utf8"
 	"unsafe"
 
@@ -74,32 +73,8 @@ func (m *Message) MarshalMessage(b []byte) ([]byte, error) {
 	i := 0
 
 	// Track fields serialized from overlays or Cleared sets.
-	var seenBuf [16]protoreflect.FieldNumber
-	seen := seenBuf[:0]
-	var seenMap map[protoreflect.FieldNumber]bool
-
-	isSeen := func(num protoreflect.FieldNumber) bool {
-		if seenMap != nil {
-			return seenMap[num]
-		}
-		return slices.Contains(seen, num)
-	}
-
-	markSeen := func(num protoreflect.FieldNumber) {
-		if seenMap != nil {
-			seenMap[num] = true
-			return
-		}
-		if len(seen) < 16 {
-			seen = append(seen, num)
-		} else {
-			seenMap = make(map[protoreflect.FieldNumber]bool)
-			for _, s := range seen {
-				seenMap[s] = true
-			}
-			seenMap[num] = true
-		}
-	}
+	var seen fieldSet
+	seen.init()
 
 	for f.IsValid() {
 		fd := ty.FieldDescriptors[i]
@@ -107,7 +82,7 @@ func (m *Message) MarshalMessage(b []byte) ([]byte, error) {
 
 		// 1. Check if cleared
 		if ov != nil && ov.Cleared[num] {
-			markSeen(num)
+			seen.add(num)
 			f = xunsafe.Add(f, 1)
 			i++
 			continue
@@ -116,7 +91,7 @@ func (m *Message) MarshalMessage(b []byte) ([]byte, error) {
 		// 2. Check overlay
 		if ov != nil {
 			if val, ok := ov.Fields[num]; ok {
-				markSeen(num)
+				seen.add(num)
 				var err error
 				b, err = marshalReflectField(b, fd, val.val)
 				if err != nil {
@@ -131,7 +106,7 @@ func (m *Message) MarshalMessage(b []byte) ([]byte, error) {
 		// 3. Check fallback
 		if ov != nil && ov.Fallback != nil {
 			if ov.Fallback.Has(fd) {
-				markSeen(num)
+				seen.add(num)
 				var err error
 				b, err = marshalReflectField(b, fd, ov.Fallback.Get(fd))
 				if err != nil {
@@ -159,7 +134,7 @@ func (m *Message) MarshalMessage(b []byte) ([]byte, error) {
 	// 5. Extensions/extra fields in the overlay
 	if ov != nil {
 		for num, val := range ov.Fields {
-			if !isSeen(num) && !ov.Cleared[num] {
+			if !seen.has(num) && !ov.Cleared[num] {
 				var err error
 				b, err = marshalReflectField(b, val.fd, val.val)
 				if err != nil {
@@ -468,9 +443,8 @@ func finishSpeculativeLength(b []byte, pos int) []byte {
 		return b
 	}
 	msiz := protowire.SizeVarint(uint64(mlen))
-	for range msiz - speculativeLength {
-		b = append(b, 0)
-	}
+	var zeros [8]byte
+	b = append(b, zeros[:msiz-speculativeLength]...)
 	copy(b[pos+msiz:], b[pos+speculativeLength:])
 	b = b[:pos+msiz+mlen]
 	protowire.AppendVarint(b[:pos], uint64(mlen))

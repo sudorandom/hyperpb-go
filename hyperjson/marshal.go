@@ -18,18 +18,17 @@ import (
 	"fmt"
 	"sort"
 	"sync"
-	"unsafe"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"buf.build/go/hyperpb"
 	"buf.build/go/hyperpb/internal/tdp/dynamic"
-	"buf.build/go/hyperpb/internal/tdp/empty"
 	"buf.build/go/hyperpb/internal/xprotoreflect"
 )
 
 // Resolver resolves google.protobuf.Any type URLs.
+
 type Resolver interface {
 	FindMessageByURL(url string) (protoreflect.MessageType, error)
 }
@@ -67,10 +66,9 @@ func (o MarshalOptions) Marshal(msg *hyperpb.Message) ([]byte, error) {
 }
 
 // unwrapMessage converts the public message wrapper to its internal
-// representation. hyperpb.Message is a bit-identical single-field wrapper
-// around dynamic.Message (see hyperpb.wrapMessage).
+// dynamic.Message representation.
 func unwrapMessage(m *hyperpb.Message) *dynamic.Message {
-	return (*dynamic.Message)(unsafe.Pointer(m))
+	return m.Unwrap()
 }
 
 type marshaler struct {
@@ -104,27 +102,7 @@ func (m *marshaler) overlayMessage(pm protoreflect.Message) error {
 	return nil
 }
 
-// fastFields writes the members of a hyperpb message by walking its compiled
-// field table in index order, mirroring dynamic.Message.Range.
-func (m *marshaler) fastFields(dm *dynamic.Message, first bool) (bool, error) {
-	ty := dm.Type()
-	f := ty.ByIndex(0)
-	for i := 0; f.IsValid(); i++ {
-		fd := ty.FieldDescriptors[i]
-		v := f.Get(unsafe.Pointer(dm))
-		if populated(fd, v) {
-			first = m.e.comma(first)
-			m.e.objectKey(m.fieldName(fd))
-			if err := m.value(fd, v); err != nil {
-				return first, err
-			}
-		}
-		f = ty.ByIndex(i + 1)
-	}
-	return first, nil
-}
-
-// genericFields is fastFields for non-hyperpb messages, using only public
+// genericFields writes fields for non-hyperpb messages, using only public
 // protoreflect operations.
 func (m *marshaler) genericFields(pm protoreflect.Message, first bool) (bool, error) {
 	fds := pm.Descriptor().Fields()
@@ -142,24 +120,8 @@ func (m *marshaler) genericFields(pm protoreflect.Message, first bool) (bool, er
 	return first, nil
 }
 
-// populated reports whether a raw getter value should be emitted, using the
-// same rules as dynamic.Message.Range.
-func populated(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
-	switch {
-	case !v.IsValid():
-		return false
-	case fd.IsList():
-		return v.List().Len() > 0
-	case fd.IsMap():
-		return v.Map().Len() > 0
-	case fd.Message() != nil:
-		_, isEmpty := v.Interface().(empty.Message)
-		return !isEmpty
-	}
-	return true
-}
-
 func (m *marshaler) fieldName(fd protoreflect.FieldDescriptor) string {
+
 	if fd.IsExtension() {
 		return "[" + string(fd.FullName()) + "]"
 	}
@@ -471,13 +433,16 @@ func (m *marshaler) anyValue(pm protoreflect.Message, fds protoreflect.FieldDesc
 			return err
 		}
 	default:
-		if _, err := m.fastFields(unwrapMessage(inner), false); err != nil {
+		dm := unwrapMessage(inner)
+		p := mplanFor(dm.Type(), m.opts.UseProtoNames)
+		if _, err := m.planFields(dm, p, false); err != nil {
 			return err
 		}
 	}
 	m.e.rawByte('}')
 	return nil
 }
+
 
 // typeCache caches hyperpb compilations of Any payload types.
 var typeCache sync.Map // protoreflect.MessageDescriptor -> *hyperpb.MessageType

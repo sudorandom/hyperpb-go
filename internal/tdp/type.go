@@ -17,9 +17,10 @@ package tdp
 import (
 	"fmt"
 	"iter"
-	_ "unsafe"
+	"unsafe"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
+
 	"google.golang.org/protobuf/runtime/protoiface"
 
 	"buf.build/go/hyperpb/internal/debug"
@@ -168,13 +169,11 @@ type TypeParser struct {
 
 // Fields returns a raw pointer to this parser's field array.
 func (p *TypeParser) Fields() *xunsafe.VLA[FieldParser] {
-	// Don't use Beyond, since Go does not inline it in a critical place.
-	// TypeParser and FieldParser have the same alignment, so this can be
-	// a pure pointer increment.
-	return xunsafe.Cast[xunsafe.VLA[FieldParser]](xunsafe.Add(p, 1))
+	return (*xunsafe.VLA[FieldParser])(unsafe.Add(unsafe.Pointer(p), unsafe.Sizeof(*p)))
 }
 
 // Format implements [fmt.Formatter].
+
 func (p *TypeParser) Format(s fmt.State, verb rune) {
 	debug.Dict(
 		debug.Fprintf("%p", p),

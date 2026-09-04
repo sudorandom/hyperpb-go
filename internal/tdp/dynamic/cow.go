@@ -15,6 +15,8 @@
 package dynamic
 
 import (
+	"slices"
+
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"buf.build/go/hyperpb/internal/tdp"
@@ -68,6 +70,45 @@ func zeroValueForKind(k protoreflect.Kind) protoreflect.Value {
 type overlayVal struct {
 	fd  protoreflect.FieldDescriptor
 	val protoreflect.Value
+}
+
+type fieldSet struct {
+	buf   [16]protoreflect.FieldNumber
+	slice []protoreflect.FieldNumber
+	set   map[protoreflect.FieldNumber]bool
+}
+
+func (s *fieldSet) init() {
+	s.slice = s.buf[:0]
+}
+
+func (s *fieldSet) has(num protoreflect.FieldNumber) bool {
+	if s.set != nil {
+		return s.set[num]
+	}
+	return slices.Contains(s.slice, num)
+}
+
+func (s *fieldSet) add(num protoreflect.FieldNumber) {
+	if s.set != nil {
+		s.set[num] = true
+		return
+	}
+	if len(s.slice) < len(s.buf) {
+		s.slice = append(s.slice, num)
+		return
+	}
+	s.set = make(map[protoreflect.FieldNumber]bool, len(s.buf)+1)
+	for _, n := range s.slice {
+		s.set[n] = true
+	}
+	s.set[num] = true
+}
+
+func newMessageValue(shared *Shared, explicitType *tdp.Type, md protoreflect.MessageDescriptor) protoreflect.Value {
+	ty := resolveType(shared, explicitType, md)
+	newMsg := shared.New(ty)
+	return protoreflect.ValueOfMessage(newMsg.ProtoReflect())
 }
 
 // MessageOverlay stores the mutated fields, cleared fields, and fallback message for a Message.
@@ -127,9 +168,7 @@ func (l *cowList) AppendMutable() protoreflect.Value {
 	if l.fd.Message() == nil {
 		panic("AppendMutable called on non-message list")
 	}
-	ty := resolveType(l.shared, l.subType, l.fd.Message())
-	newMsg := l.shared.New(ty)
-	val := protoreflect.ValueOfMessage(newMsg.ProtoReflect())
+	val := newMessageValue(l.shared, l.subType, l.fd.Message())
 	l.elems = append(l.elems, val)
 	return val
 }
@@ -140,9 +179,7 @@ func (l *cowList) Truncate(n int) {
 
 func (l *cowList) NewElement() protoreflect.Value {
 	if l.fd.Message() != nil {
-		ty := resolveType(l.shared, l.subType, l.fd.Message())
-		newMsg := l.shared.New(ty)
-		return protoreflect.ValueOfMessage(newMsg.ProtoReflect())
+		return newMessageValue(l.shared, l.subType, l.fd.Message())
 	}
 	return zeroValueForKind(l.fd.Kind())
 }
@@ -213,18 +250,14 @@ func (mp *cowMap) Mutable(key protoreflect.MapKey) protoreflect.Value {
 	if val, ok := mp.m[key.Interface()]; ok {
 		return val
 	}
-	ty := resolveType(mp.shared, mp.valType, mp.fd.MapValue().Message())
-	newMsg := mp.shared.New(ty)
-	val := protoreflect.ValueOfMessage(newMsg.ProtoReflect())
+	val := newMessageValue(mp.shared, mp.valType, mp.fd.MapValue().Message())
 	mp.m[key.Interface()] = val
 	return val
 }
 
 func (mp *cowMap) NewValue() protoreflect.Value {
 	if mp.fd.MapValue().Message() != nil {
-		ty := resolveType(mp.shared, mp.valType, mp.fd.MapValue().Message())
-		newMsg := mp.shared.New(ty)
-		return protoreflect.ValueOfMessage(newMsg.ProtoReflect())
+		return newMessageValue(mp.shared, mp.valType, mp.fd.MapValue().Message())
 	}
 	return zeroValueForKind(mp.fd.MapValue().Kind())
 }

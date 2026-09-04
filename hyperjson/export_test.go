@@ -26,5 +26,5 @@ func TranscodeUnmarshal(data []byte, msg *hyperpb.Message) error {
 
 // IsDirect reports whether the message's type takes the direct-write path.
 func IsDirect(msg *hyperpb.Message) bool {
-	return dplanFor(unwrapMessage(msg).Type()).direct
+	return dplanFor(msg.Unwrap().Type()).direct
 }

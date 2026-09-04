@@ -54,7 +54,7 @@ func Unmarshal(data []byte, msg *hyperpb.Message) error {
 
 // Unmarshal parses protojson-encoded data into msg.
 func (o UnmarshalOptions) Unmarshal(data []byte, msg *hyperpb.Message) error {
-	dm := unwrapMessage(msg)
+	dm := msg.Unwrap()
 	if dm.Shared != nil && dm.Shared.Overlays != nil {
 		delete(dm.Shared.Overlays, dm)
 	}
@@ -1033,5 +1033,5 @@ func normalizeAnyWire(md protoreflect.MessageDescriptor, wire []byte) ([]byte, e
 	if err := inner.Unmarshal(wire); err != nil {
 		return nil, err
 	}
-	return unwrapMessage(inner).MarshalMessage(nil)
+	return inner.Unwrap().MarshalMessage(nil)
 }
