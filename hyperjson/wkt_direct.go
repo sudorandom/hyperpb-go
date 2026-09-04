@@ -1,0 +1,214 @@
+// Copyright 2025 Buf Technologies, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package hyperjson
+
+import (
+	"strings"
+	"unsafe"
+
+	"google.golang.org/protobuf/reflect/protoregistry"
+
+	"buf.build/go/hyperpb/internal/tdp/dynamic"
+	"buf.build/go/hyperpb/internal/tdp/repeated"
+)
+
+// wktValue parses the custom JSON shape of a well-known type directly into
+// its message storage. Because every WKT is structurally made of ordinary
+// fields, most cases delegate to the generic field writers on the WKT's own
+// plan.
+func (w *writer) wktValue(p *dplan, m *dynamic.Message) error {
+	switch p.wkt {
+	case wkTimestamp:
+		s, err := w.d.readString()
+		if err != nil {
+			return err
+		}
+		seconds, nanos, err := parseTimestamp(unsafeString(s))
+		if err != nil {
+			return w.d.errf("%v", err)
+		}
+		store(m, &p.byIdx[0], seconds)
+		store(m, &p.byIdx[1], nanos)
+		return nil
+
+	case wkDuration:
+		s, err := w.d.readString()
+		if err != nil {
+			return err
+		}
+		seconds, nanos, err := parseDuration(unsafeString(s))
+		if err != nil {
+			return w.d.errf("%v", err)
+		}
+		store(m, &p.byIdx[0], seconds)
+		store(m, &p.byIdx[1], nanos)
+		return nil
+
+	case wkEmpty:
+		return w.d.walkObject(func(key []byte) error {
+			if w.opts.DiscardUnknown {
+				return w.d.skipValue()
+			}
+			return w.d.errf("unknown field %q in google.protobuf.Empty", key)
+		})
+
+	case wkStruct:
+		// A Struct's JSON object is exactly its fields map's JSON object.
+		return w.mapField(&p.byIdx[0], m)
+
+	case wkValue:
+		// Pick the oneof member from the JSON value's kind; the generic
+		// singular writer consumes the token and sets the which-word.
+		// Fields: null(0), number(1), string(2), bool(3), struct(4), list(5).
+		c, err := w.d.peek()
+		if err != nil {
+			return err
+		}
+		var idx int
+		switch c {
+		case 'n':
+			idx = 0
+		case 't', 'f':
+			idx = 3
+		case '"':
+			idx = 2
+		case '{':
+			idx = 4
+		case '[':
+			idx = 5
+		default:
+			idx = 1
+		}
+		return w.singular(&p.byIdx[idx], m)
+
+	case wkListValue:
+		return w.listField(&p.byIdx[0], m)
+
+	case wkFieldMask:
+		s, err := w.d.readString()
+		if err != nil {
+			return err
+		}
+		if len(s) == 0 {
+			return nil
+		}
+		df := &p.byIdx[0]
+		strs := (*repeated.Strings)(fieldPtr(m, df.offset))
+		for _, path := range strings.Split(string(s), ",") {
+			snake, ok := fieldMaskPathToSnake(path)
+			if !ok {
+				return w.d.errf("invalid google.protobuf.FieldMask path %q", path)
+			}
+			if strs.Raw.Len() == 0 {
+				w.fixups = append(w.fixups, unsafe.Pointer(&strs.Src))
+			}
+			strs.Raw = strs.Raw.AppendOne(w.arena, w.append([]byte(snake)))
+		}
+		return nil
+
+	case wkAny:
+		return w.anyValue(p, m)
+
+	default: // wkWrapper
+		return w.singular(p.wrapped, m)
+	}
+}
+
+// anyValue parses a google.protobuf.Any: the payload is transcoded to wire
+// format into the appendix, since the value field is bytes.
+func (w *writer) anyValue(p *dplan, m *dynamic.Message) error {
+	// First pass: find @type, which may appear anywhere in the object.
+	save := w.d
+	var typeURL []byte
+	err := w.d.walkObject(func(key []byte) error {
+		if string(key) == "@type" {
+			if typeURL != nil {
+				return w.d.errf("duplicate @type in google.protobuf.Any")
+			}
+			s, err := w.d.readString()
+			if err != nil {
+				return err
+			}
+			typeURL = append([]byte(nil), s...)
+			return nil
+		}
+		return w.d.skipValue()
+	})
+	if err != nil {
+		return err
+	}
+	if typeURL == nil {
+		if save.tryConsume('{') && save.tryConsume('}') {
+			return nil // Empty Any.
+		}
+		return w.d.errf("google.protobuf.Any is missing @type")
+	}
+
+	resolver := w.opts.Resolver
+	if resolver == nil {
+		resolver = protoregistry.GlobalTypes
+	}
+	mt, err := resolver.FindMessageByURL(string(typeURL))
+	if err != nil {
+		return w.d.errf("cannot resolve google.protobuf.Any type URL %q: %v", typeURL, err)
+	}
+	inner := uplanFor(mt.Descriptor())
+
+	store(m, &p.byIdx[0], w.append(typeURL))
+
+	// Second pass: rewind and transcode the payload to wire.
+	w.d = save
+	tc := transcoderPool.Get().(*transcoder) //nolint:errcheck
+	tc.d = w.d
+	tc.opts = w.opts
+	tc.seen = tc.seen[:0]
+
+	var wire []byte
+	if inner.wkt != wkNone {
+		var sawValue bool
+		err = tc.d.walkObject(func(key []byte) error {
+			switch string(key) {
+			case "@type":
+				return tc.d.skipValue()
+			case "value":
+				if sawValue {
+					return tc.d.errf("duplicate value in google.protobuf.Any")
+				}
+				sawValue = true
+				var werr error
+				wire, werr = tc.wktContent(inner, wire)
+				return werr
+			default:
+				return tc.d.errf("unknown field %q in google.protobuf.Any", key)
+			}
+		})
+		if err == nil && !sawValue && inner.wkt != wkEmpty {
+			err = tc.d.errf("google.protobuf.Any of type %q is missing value", typeURL)
+		}
+	} else {
+		wire, err = tc.message(inner, wire, true)
+	}
+	w.d = tc.d
+	transcoderPool.Put(tc)
+	if err != nil {
+		return err
+	}
+	norm, err := normalizeAnyWire(mt.Descriptor(), wire)
+	if err != nil {
+		return w.d.errf("google.protobuf.Any payload: %v", err)
+	}
+	store(m, &p.byIdx[1], w.append(norm))
+	return nil
+}

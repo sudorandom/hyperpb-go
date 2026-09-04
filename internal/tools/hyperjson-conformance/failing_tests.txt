@@ -1,0 +1,40 @@
+# Expected conformance failures.
+#
+# Every entry in this file is caused by a hyperpb wire-format parser bug, not
+# by hyperjson. Both are reproduced in repro_test.go and should be removed
+# from this list once fixed upstream:
+#
+# 1. Repeated bool: varint values are truncated to 32 bits before the
+#    "nonzero means true" test, so values like 2^33 decode as false
+#    (TestRepeatedBoolLargeVarint).
+#
+# 2. Map entries whose submessage repeats the key or value field fail to
+#    parse with "unexpected EOF"; the last occurrence should win
+#    (TestDuplicateKeyInMapEntry).
+
+Required.Proto2.ProtobufInput.ValidDataMap.STRING.MESSAGE.DuplicateKeyInMapEntry.JsonOutput
+Required.Proto2.ProtobufInput.ValidDataMap.STRING.MESSAGE.DuplicateKeyInMapEntry.ProtobufOutput
+Required.Proto3.ProtobufInput.ValidDataMap.STRING.MESSAGE.DuplicateKeyInMapEntry.JsonOutput
+Required.Proto3.ProtobufInput.ValidDataMap.STRING.MESSAGE.DuplicateKeyInMapEntry.ProtobufOutput
+
+Required.Proto2.ProtobufInput.ValidDataRepeated.BOOL.PackedInput.JsonOutput
+Required.Proto2.ProtobufInput.ValidDataRepeated.BOOL.PackedInput.ProtobufOutput
+Required.Proto2.ProtobufInput.ValidDataRepeated.BOOL.UnpackedInput.JsonOutput
+Required.Proto2.ProtobufInput.ValidDataRepeated.BOOL.UnpackedInput.ProtobufOutput
+Required.Proto3.ProtobufInput.ValidDataRepeated.BOOL.PackedInput.JsonOutput
+Required.Proto3.ProtobufInput.ValidDataRepeated.BOOL.PackedInput.ProtobufOutput
+Required.Proto3.ProtobufInput.ValidDataRepeated.BOOL.UnpackedInput.JsonOutput
+Required.Proto3.ProtobufInput.ValidDataRepeated.BOOL.UnpackedInput.ProtobufOutput
+
+Recommended.Proto2.ProtobufInput.ValidDataRepeated.BOOL.PackedInput.DefaultOutput.ProtobufOutput
+Recommended.Proto2.ProtobufInput.ValidDataRepeated.BOOL.PackedInput.PackedOutput.ProtobufOutput
+Recommended.Proto2.ProtobufInput.ValidDataRepeated.BOOL.PackedInput.UnpackedOutput.ProtobufOutput
+Recommended.Proto2.ProtobufInput.ValidDataRepeated.BOOL.UnpackedInput.DefaultOutput.ProtobufOutput
+Recommended.Proto2.ProtobufInput.ValidDataRepeated.BOOL.UnpackedInput.PackedOutput.ProtobufOutput
+Recommended.Proto2.ProtobufInput.ValidDataRepeated.BOOL.UnpackedInput.UnpackedOutput.ProtobufOutput
+Recommended.Proto3.ProtobufInput.ValidDataRepeated.BOOL.PackedInput.DefaultOutput.ProtobufOutput
+Recommended.Proto3.ProtobufInput.ValidDataRepeated.BOOL.PackedInput.PackedOutput.ProtobufOutput
+Recommended.Proto3.ProtobufInput.ValidDataRepeated.BOOL.PackedInput.UnpackedOutput.ProtobufOutput
+Recommended.Proto3.ProtobufInput.ValidDataRepeated.BOOL.UnpackedInput.DefaultOutput.ProtobufOutput
+Recommended.Proto3.ProtobufInput.ValidDataRepeated.BOOL.UnpackedInput.PackedOutput.ProtobufOutput
+Recommended.Proto3.ProtobufInput.ValidDataRepeated.BOOL.UnpackedInput.UnpackedOutput.ProtobufOutput
