@@ -15,6 +15,8 @@
 package thunks
 
 import (
+	"math"
+
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
@@ -22,7 +24,6 @@ import (
 	"buf.build/go/hyperpb/internal/tdp/compiler"
 	"buf.build/go/hyperpb/internal/tdp/dynamic"
 	"buf.build/go/hyperpb/internal/tdp/vm"
-	"buf.build/go/hyperpb/internal/xprotoreflect"
 	"buf.build/go/hyperpb/internal/xunsafe/layout"
 	"buf.build/go/hyperpb/internal/zc"
 )
@@ -38,19 +39,19 @@ var optionalFields = map[protoreflect.Kind]*compiler.Archetype{
 	protoreflect.Int32Kind: {
 		Layout:  layout.Of[int32](),
 		Bits:    1,
-		Getter:  getOptionalScalar[int32],
+		Getter:  getOptionalInt32,
 		Parsers: []compiler.Parser{{Kind: protowire.VarintType, Thunk: parseOptionalVarint32}},
 	},
 	protoreflect.Uint32Kind: {
 		Layout:  layout.Of[uint32](),
 		Bits:    1,
-		Getter:  getOptionalScalar[uint32],
+		Getter:  getOptionalUint32,
 		Parsers: []compiler.Parser{{Kind: protowire.VarintType, Thunk: parseOptionalVarint32}},
 	},
 	protoreflect.Sint32Kind: {
 		Layout:  layout.Of[int32](),
 		Bits:    1,
-		Getter:  getOptionalScalar[int32],
+		Getter:  getOptionalInt32,
 		Parsers: []compiler.Parser{{Kind: protowire.VarintType, Thunk: parseOptionalZigZag32}},
 	},
 
@@ -58,19 +59,19 @@ var optionalFields = map[protoreflect.Kind]*compiler.Archetype{
 	protoreflect.Int64Kind: {
 		Layout:  layout.Of[int64](),
 		Bits:    1,
-		Getter:  getOptionalScalar[int64],
+		Getter:  getOptionalInt64,
 		Parsers: []compiler.Parser{{Kind: protowire.VarintType, Thunk: parseOptionalVarint64}},
 	},
 	protoreflect.Uint64Kind: {
 		Layout:  layout.Of[uint64](),
 		Bits:    1,
-		Getter:  getOptionalScalar[uint64],
+		Getter:  getOptionalUint64,
 		Parsers: []compiler.Parser{{Kind: protowire.VarintType, Thunk: parseOptionalVarint64}},
 	},
 	protoreflect.Sint64Kind: {
 		Layout:  layout.Of[int64](),
 		Bits:    1,
-		Getter:  getOptionalScalar[int64],
+		Getter:  getOptionalInt64,
 		Parsers: []compiler.Parser{{Kind: protowire.VarintType, Thunk: parseOptionalZigZag64}},
 	},
 
@@ -78,19 +79,19 @@ var optionalFields = map[protoreflect.Kind]*compiler.Archetype{
 	protoreflect.Fixed32Kind: {
 		Layout:  layout.Of[uint32](),
 		Bits:    1,
-		Getter:  getOptionalScalar[uint32],
+		Getter:  getOptionalUint32,
 		Parsers: []compiler.Parser{{Kind: protowire.Fixed32Type, Thunk: parseOptionalFixed32}},
 	},
 	protoreflect.Sfixed32Kind: {
 		Layout:  layout.Of[int32](),
 		Bits:    1,
-		Getter:  getOptionalScalar[int32],
+		Getter:  getOptionalInt32,
 		Parsers: []compiler.Parser{{Kind: protowire.Fixed32Type, Thunk: parseOptionalFixed32}},
 	},
 	protoreflect.FloatKind: {
 		Layout:  layout.Of[float32](),
 		Bits:    1,
-		Getter:  getOptionalScalar[float32],
+		Getter:  getOptionalFloat32,
 		Parsers: []compiler.Parser{{Kind: protowire.Fixed32Type, Thunk: parseOptionalFixed32}},
 	},
 
@@ -98,19 +99,19 @@ var optionalFields = map[protoreflect.Kind]*compiler.Archetype{
 	protoreflect.Fixed64Kind: {
 		Layout:  layout.Of[uint64](),
 		Bits:    1,
-		Getter:  getOptionalScalar[uint64],
+		Getter:  getOptionalUint64,
 		Parsers: []compiler.Parser{{Kind: protowire.Fixed64Type, Thunk: parseOptionalFixed64}},
 	},
 	protoreflect.Sfixed64Kind: {
 		Layout:  layout.Of[int64](),
 		Bits:    1,
-		Getter:  getOptionalScalar[int64],
+		Getter:  getOptionalInt64,
 		Parsers: []compiler.Parser{{Kind: protowire.Fixed64Type, Thunk: parseOptionalFixed64}},
 	},
 	protoreflect.DoubleKind: {
 		Layout:  layout.Of[float64](),
 		Bits:    1,
-		Getter:  getOptionalScalar[float64],
+		Getter:  getOptionalFloat64,
 		Parsers: []compiler.Parser{{Kind: protowire.Fixed64Type, Thunk: parseOptionalFixed64}},
 	},
 
@@ -124,7 +125,7 @@ var optionalFields = map[protoreflect.Kind]*compiler.Archetype{
 	protoreflect.EnumKind: {
 		Layout:  layout.Of[protoreflect.EnumNumber](),
 		Bits:    1,
-		Getter:  getOptionalScalar[protoreflect.EnumNumber],
+		Getter:  getOptionalEnum,
 		Parsers: []compiler.Parser{{Kind: protowire.VarintType, Thunk: parseOptionalVarint32}},
 	},
 
@@ -153,12 +154,53 @@ var optionalFields = map[protoreflect.Kind]*compiler.Archetype{
 	protoreflect.GroupKind:   singularFields[protoreflect.GroupKind],
 }
 
-func getOptionalScalar[T tdp.Scalar](m *dynamic.Message, _ *tdp.Type, getter *tdp.Accessor) protoreflect.Value {
+func getOptionalInt32(m *dynamic.Message, _ *tdp.Type, getter *tdp.Accessor) protoreflect.Value {
 	if !m.GetBit(getter.Offset.Bit) {
 		return protoreflect.Value{}
 	}
-	v := *dynamic.GetField[T](m, getter.Offset)
-	return xprotoreflect.ValueOfScalar(v)
+	return protoreflect.ValueOfInt32(*dynamic.GetField[int32](m, getter.Offset))
+}
+
+func getOptionalUint32(m *dynamic.Message, _ *tdp.Type, getter *tdp.Accessor) protoreflect.Value {
+	if !m.GetBit(getter.Offset.Bit) {
+		return protoreflect.Value{}
+	}
+	return protoreflect.ValueOfUint32(*dynamic.GetField[uint32](m, getter.Offset))
+}
+
+func getOptionalInt64(m *dynamic.Message, _ *tdp.Type, getter *tdp.Accessor) protoreflect.Value {
+	if !m.GetBit(getter.Offset.Bit) {
+		return protoreflect.Value{}
+	}
+	return protoreflect.ValueOfInt64(*dynamic.GetField[int64](m, getter.Offset))
+}
+
+func getOptionalUint64(m *dynamic.Message, _ *tdp.Type, getter *tdp.Accessor) protoreflect.Value {
+	if !m.GetBit(getter.Offset.Bit) {
+		return protoreflect.Value{}
+	}
+	return protoreflect.ValueOfUint64(*dynamic.GetField[uint64](m, getter.Offset))
+}
+
+func getOptionalFloat32(m *dynamic.Message, _ *tdp.Type, getter *tdp.Accessor) protoreflect.Value {
+	if !m.GetBit(getter.Offset.Bit) {
+		return protoreflect.Value{}
+	}
+	return protoreflect.ValueOfFloat32(math.Float32frombits(*dynamic.GetField[uint32](m, getter.Offset)))
+}
+
+func getOptionalFloat64(m *dynamic.Message, _ *tdp.Type, getter *tdp.Accessor) protoreflect.Value {
+	if !m.GetBit(getter.Offset.Bit) {
+		return protoreflect.Value{}
+	}
+	return protoreflect.ValueOfFloat64(math.Float64frombits(*dynamic.GetField[uint64](m, getter.Offset)))
+}
+
+func getOptionalEnum(m *dynamic.Message, _ *tdp.Type, getter *tdp.Accessor) protoreflect.Value {
+	if !m.GetBit(getter.Offset.Bit) {
+		return protoreflect.Value{}
+	}
+	return protoreflect.ValueOfEnum(*dynamic.GetField[protoreflect.EnumNumber](m, getter.Offset))
 }
 
 func getOptionalBool(m *dynamic.Message, _ *tdp.Type, getter *tdp.Accessor) protoreflect.Value {
