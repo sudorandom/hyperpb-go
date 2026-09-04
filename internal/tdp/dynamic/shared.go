@@ -37,6 +37,13 @@ type Shared struct {
 	Len  int
 	Root *Message
 
+	// SrcIsWire records whether Src holds the original wire-format input.
+	// The wire parser sets it; other producers of parsed messages (e.g. the
+	// hyperjson JSON codec, whose Src is the JSON input plus an appendix)
+	// leave it false, which keeps the raw re-emit fast path in proto.Marshal
+	// from returning non-wire bytes.
+	SrcIsWire bool
+
 	// Synchronizes calls to startParse() with this context.
 	Lock sync.Mutex
 
@@ -89,6 +96,7 @@ func (s *Shared) Free() {
 	s.arena.Free()
 	s.lib = nil
 	s.Src = nil
+	s.SrcIsWire = false
 	s.Root = nil
 
 	clear(s.Cold)

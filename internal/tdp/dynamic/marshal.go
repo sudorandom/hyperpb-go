@@ -220,9 +220,16 @@ func (m *Message) marshalBaseField(b []byte, fd protoreflect.FieldDescriptor, f 
 	switch fd.Kind() {
 	case protoreflect.BoolKind:
 		var val bool
-		if fd.HasPresence() {
+		od := fd.ContainingOneof()
+		switch {
+		case od != nil && !od.IsSynthetic() && f.Offset.Number != 0:
+			// A member of a oneof implemented as a real union: the value is
+			// stored as a byte in the union storage, and Offset.Bit is the
+			// byte offset of the which-word, not a bit index.
+			val = *GetField[byte](m, f.Offset) != 0
+		case fd.HasPresence():
 			val = m.GetBit(f.Offset.Bit + 1)
-		} else {
+		default:
 			val = m.GetBit(f.Offset.Bit)
 		}
 		b = protowire.AppendVarint(b, protowire.EncodeBool(val))

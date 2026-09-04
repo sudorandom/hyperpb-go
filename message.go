@@ -362,39 +362,30 @@ func unmarshalShim(in protoiface.UnmarshalInput) (out protoiface.UnmarshalOutput
 	return out, err
 }
 
-// marshalShim implements [protoiface.Methods].Marshal.
+// marshalShim implements [protoiface.Methods].Marshal by re-encoding the
+// message field by field with the native marshaler.
 //
-// Fast path: if the message was parsed and has not been mutated, the original
-// wire bytes are still in Shared.Src[0:Shared.Len] — we can return them
-// verbatim with a single append (no field-by-field reflection walk).
+// Note that re-emitting the original wire bytes (Shared.Src) verbatim for
+// unmutated parsed roots is NOT a valid fast path here, even though it is
+// tempting: proto.Marshal is expected to produce a canonical re-encoding,
+// and echoing the input preserves non-canonical forms the parser accepted —
+// overlong varints, repeated occurrences of oneof members and singular
+// fields (where last-one-wins must drop the earlier records), and
+// unpacked/packed encoding variants. The conformance suite's
+// ProtobufInput.*Binary.ProtobufOutput tests fail on all of those. It would
+// also be incorrect for messages whose Shared.Src is not wire format at all
+// (hyperjson's direct JSON parser stores the JSON input there; see
+// Shared.SrcIsWire).
 //
-// Slow path: mutated or freshly-allocated messages use the standard reflection
-// encoding shape directly. Calling back into proto.MarshalOptions here would
-// recurse through ProtoMethods for every nested *Message and allocate a wrapper
-// each time.
+// We call MarshalMessage directly rather than going back through
+// proto.MarshalOptions, which would recurse through ProtoMethods for every
+// nested *Message and allocate a wrapper each time.
 func marshalShim(in protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
 	raw := xunsafe.AnyData(in.Message)
 	m := xunsafe.Cast[Message](raw)
 
-	// Unmutated fast path: re-emit the original wire bytes directly.
-	// This is only safe for the parsed root and only while the whole message
-	// tree has no overlays; nested overlays would otherwise be skipped.
-	if m.canMarshalRaw() {
-		src := unsafe.Slice(m.impl.Shared.Src, m.impl.Shared.Len)
-		return protoiface.MarshalOutput{
-			Buf: append(in.Buf, src...),
-		}, nil
-	}
-
 	buf, err := m.impl.MarshalMessage(in.Buf)
 	return protoiface.MarshalOutput{Buf: buf}, err
-}
-
-func (m *Message) canMarshalRaw() bool {
-	return m.impl.Shared != nil &&
-		m.impl.Shared.Root == &m.impl &&
-		len(m.impl.Shared.Overlays) == 0 &&
-		m.impl.Shared.Src != nil
 }
 
 // requiredShim implements [protoiface.Methods].CheckInitialized.
