@@ -495,11 +495,13 @@ func checkIntRange(class uint8, u uint64, neg bool) (int64, bool) {
 			return 0, false
 		}
 	}
-	v := int64(u)
 	if neg {
-		v = -v
+		if u == 1<<63 {
+			return math.MinInt64, true
+		}
+		return -int64(u), true
 	}
-	return v, true
+	return int64(u), true
 }
 
 // readFloat consumes a float value (number, quoted number, or the special

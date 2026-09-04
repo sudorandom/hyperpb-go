@@ -163,8 +163,7 @@ func handle(req *conformance.ConformanceRequest) *conformance.ConformanceRespons
 
 	switch req.GetRequestedOutputFormat() {
 	case conformance.WireFormat_PROTOBUF:
-		// hyperpb has no wire serializer; generic reflection-based
-		// proto.Marshal works on hyperpb messages.
+		// Serializes using hyperpb's native wire marshaler via proto.Marshal.
 		out, err := proto.Marshal(msg)
 		if err != nil {
 			return serializeError(err)

@@ -457,20 +457,22 @@ const speculativeLength = 1
 
 func appendSpeculativeLength(b []byte) ([]byte, int) {
 	pos := len(b)
-	b = append(b, "\x00\x00\x00\x00"[:speculativeLength]...)
+	b = append(b, 0)
 	return b, pos
 }
 
 func finishSpeculativeLength(b []byte, pos int) []byte {
 	mlen := len(b) - pos - speculativeLength
-	msiz := protowire.SizeVarint(uint64(mlen))
-	if msiz != speculativeLength {
-		for range msiz - speculativeLength {
-			b = append(b, 0)
-		}
-		copy(b[pos+msiz:], b[pos+speculativeLength:])
-		b = b[:pos+msiz+mlen]
+	if mlen < 0x80 {
+		b[pos] = byte(mlen)
+		return b
 	}
+	msiz := protowire.SizeVarint(uint64(mlen))
+	for range msiz - speculativeLength {
+		b = append(b, 0)
+	}
+	copy(b[pos+msiz:], b[pos+speculativeLength:])
+	b = b[:pos+msiz+mlen]
 	protowire.AppendVarint(b[:pos], uint64(mlen))
 	return b
 }

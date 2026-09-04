@@ -55,6 +55,9 @@ func Unmarshal(data []byte, msg *hyperpb.Message) error {
 // Unmarshal parses protojson-encoded data into msg.
 func (o UnmarshalOptions) Unmarshal(data []byte, msg *hyperpb.Message) error {
 	dm := unwrapMessage(msg)
+	if dm.Shared != nil && dm.Shared.Overlays != nil {
+		delete(dm.Shared.Overlays, dm)
+	}
 	if dp := dplanFor(dm.Type()); dp.direct {
 		return o.directUnmarshal(dp, data, dm, msg.Initialized)
 	}
@@ -486,32 +489,9 @@ func (t *transcoder) singular(uf *ufield, out []byte) ([]byte, error) {
 // when the value is out of range for the field ("-0" for unsigned fields also
 // lands here, matching the general path's rejection).
 func (t *transcoder) fastIntRecord(uf *ufield, u uint64, neg bool, out []byte) ([]byte, bool) {
-	var v int64
-	switch uf.class {
-	case ucInt32, ucSint32, ucSfixed32:
-		if (neg && u > 1<<31) || (!neg && u > 1<<31-1) {
-			return out, false
-		}
-		v = int64(u)
-		if neg {
-			v = -v
-		}
-	case ucInt64, ucSint64, ucSfixed64:
-		if (neg && u > 1<<63) || (!neg && u > 1<<63-1) {
-			return out, false
-		}
-		v = int64(u)
-		if neg {
-			v = -v
-		}
-	case ucUint32, ucFixed32:
-		if neg || u > 1<<32-1 {
-			return out, false
-		}
-	default: // ucUint64, ucFixed64
-		if neg {
-			return out, false
-		}
+	v, ok := checkIntRange(uf.class, u, neg)
+	if !ok {
+		return out, false
 	}
 
 	out = protowire.AppendVarint(out, uf.tag)

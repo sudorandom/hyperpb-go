@@ -70,9 +70,6 @@ func (m *Message) Unmarshal(data []byte, options ...UnmarshalOption) error {
 	if m.impl.Shared != nil && m.impl.Shared.Overlays != nil {
 		delete(m.impl.Shared.Overlays, &m.impl)
 	}
-	if m.impl.Shared != nil {
-		m.impl.Shared.Root = &m.impl
-	}
 	opts := vm.NewOptions()
 	for _, opt := range options {
 		if opt.apply != nil {
@@ -374,8 +371,7 @@ func unmarshalShim(in protoiface.UnmarshalInput) (out protoiface.UnmarshalOutput
 // unpacked/packed encoding variants. The conformance suite's
 // ProtobufInput.*Binary.ProtobufOutput tests fail on all of those. It would
 // also be incorrect for messages whose Shared.Src is not wire format at all
-// (hyperjson's direct JSON parser stores the JSON input there; see
-// Shared.SrcIsWire).
+// (hyperjson's direct JSON parser stores the JSON input there).
 //
 // We call MarshalMessage directly rather than going back through
 // proto.MarshalOptions, which would recurse through ProtoMethods for every

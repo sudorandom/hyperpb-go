@@ -694,19 +694,8 @@ func (m *Message) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 			var subType *tdp.Type
 			if f != nil && f.Message != nil {
 				subType = f.Message
-			} else if m.Shared != nil && m.Shared.Library() != nil {
-				if t, ok := m.Shared.Library().Type(fd.Message()); ok {
-					subType = t
-				}
 			}
-			if subType == nil {
-				if CompileHook != nil {
-					subType = CompileHook(fd.Message())
-				} else {
-					panic("hyperpb: compile hook not set")
-				}
-			}
-			newMsg = m.Shared.New(subType)
+			newMsg = m.Shared.New(resolveType(m.Shared, subType, fd.Message()))
 		}
 		val := protoreflect.ValueOfMessage(newMsg.ProtoReflect())
 		m.Set(fd, val)
@@ -741,19 +730,8 @@ func (m *Message) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 		var subType *tdp.Type
 		if f != nil && f.Message != nil {
 			subType = f.Message
-		} else if m.Shared != nil && m.Shared.Library() != nil {
-			if t, ok := m.Shared.Library().Type(fd.Message()); ok {
-				subType = t
-			}
 		}
-		if subType == nil {
-			if CompileHook != nil {
-				subType = CompileHook(fd.Message())
-			} else {
-				panic("hyperpb: compile hook not set")
-			}
-		}
-		newMsg := m.Shared.New(subType)
+		newMsg := m.Shared.New(resolveType(m.Shared, subType, fd.Message()))
 		return protoreflect.ValueOfMessage(newMsg.ProtoReflect())
 	}
 	return fd.Default()

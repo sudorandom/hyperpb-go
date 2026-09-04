@@ -84,9 +84,9 @@ func TestMarshalSeesNestedMutations(t *testing.T) {
 	assert.EqualValues(t, 42, check.GetS().GetV(), "nested overlay write must be visible: %s", out)
 }
 
-// TestProtoMarshalOfJSONParsedMessage guards the SrcIsWire flag: a message
-// whose Shared.Src holds JSON (from the direct writer) must never be
-// re-emitted verbatim by proto.Marshal's raw fast path.
+// TestProtoMarshalOfJSONParsedMessage verifies that a message parsed with
+// hyperjson (whose Shared.Src holds JSON input) marshals via proto.Marshal to
+// valid wire bytes, rather than echoing the JSON source.
 func TestProtoMarshalOfJSONParsedMessage(t *testing.T) {
 	t.Parallel()
 	md := mdOf(&testpb.Scalars{})

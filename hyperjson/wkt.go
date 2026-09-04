@@ -111,16 +111,12 @@ func appendFraction(buf []byte, nanos int32) []byte {
 }
 
 func appendZeroPadded(buf []byte, v uint64, width int) []byte {
-	start := len(buf)
-	buf = strconv.AppendUint(buf, v, 10)
-	if pad := width - (len(buf) - start); pad > 0 {
-		buf = append(buf, make([]byte, pad)...)
-		copy(buf[start+pad:], buf[start:])
-		for i := range pad {
-			buf[start+i] = '0'
-		}
+	var tmp [10]byte
+	digits := strconv.AppendUint(tmp[:0], v, 10)
+	if pad := width - len(digits); pad > 0 {
+		buf = append(buf, "000000000"[:pad]...)
 	}
-	return buf
+	return append(buf, digits...)
 }
 
 // parseTimestamp parses an RFC 3339 timestamp into (seconds, nanos).

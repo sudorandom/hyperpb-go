@@ -1,3 +1,4 @@
 hyperpb.*
 .tmp
 testdata/fuzz
+*.test

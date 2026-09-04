@@ -23,6 +23,48 @@ import (
 // CompileHook is initialized by the hyperpb package to avoid circular dependencies.
 var CompileHook func(protoreflect.MessageDescriptor) *tdp.Type
 
+func resolveType(shared *Shared, explicitType *tdp.Type, md protoreflect.MessageDescriptor) *tdp.Type {
+	if explicitType != nil {
+		return explicitType
+	}
+	if shared != nil && shared.Library() != nil {
+		if t, ok := shared.Library().Type(md); ok {
+			return t
+		}
+	}
+	if CompileHook != nil {
+		return CompileHook(md)
+	}
+	panic("hyperpb: compile hook not set")
+}
+
+func zeroValueForKind(k protoreflect.Kind) protoreflect.Value {
+	switch k {
+	case protoreflect.BoolKind:
+		return protoreflect.ValueOfBool(false)
+	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
+		return protoreflect.ValueOfInt32(0)
+	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
+		return protoreflect.ValueOfInt64(0)
+	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
+		return protoreflect.ValueOfUint32(0)
+	case protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
+		return protoreflect.ValueOfUint64(0)
+	case protoreflect.FloatKind:
+		return protoreflect.ValueOfFloat32(0)
+	case protoreflect.DoubleKind:
+		return protoreflect.ValueOfFloat64(0)
+	case protoreflect.StringKind:
+		return protoreflect.ValueOf("")
+	case protoreflect.BytesKind:
+		return protoreflect.ValueOfBytes(nil)
+	case protoreflect.EnumKind:
+		return protoreflect.ValueOfEnum(0)
+	default:
+		return protoreflect.Value{}
+	}
+}
+
 type overlayVal struct {
 	fd  protoreflect.FieldDescriptor
 	val protoreflect.Value
@@ -85,21 +127,7 @@ func (l *cowList) AppendMutable() protoreflect.Value {
 	if l.fd.Message() == nil {
 		panic("AppendMutable called on non-message list")
 	}
-	var ty *tdp.Type
-	if l.subType != nil {
-		ty = l.subType
-	} else if l.shared != nil && l.shared.Library() != nil {
-		if t, ok := l.shared.Library().Type(l.fd.Message()); ok {
-			ty = t
-		}
-	}
-	if ty == nil {
-		if CompileHook != nil {
-			ty = CompileHook(l.fd.Message())
-		} else {
-			panic("hyperpb: compile hook not set")
-		}
-	}
+	ty := resolveType(l.shared, l.subType, l.fd.Message())
 	newMsg := l.shared.New(ty)
 	val := protoreflect.ValueOfMessage(newMsg.ProtoReflect())
 	l.elems = append(l.elems, val)
@@ -112,48 +140,11 @@ func (l *cowList) Truncate(n int) {
 
 func (l *cowList) NewElement() protoreflect.Value {
 	if l.fd.Message() != nil {
-		var ty *tdp.Type
-		if l.subType != nil {
-			ty = l.subType
-		} else if l.shared != nil && l.shared.Library() != nil {
-			if t, ok := l.shared.Library().Type(l.fd.Message()); ok {
-				ty = t
-			}
-		}
-		if ty == nil {
-			if CompileHook != nil {
-				ty = CompileHook(l.fd.Message())
-			} else {
-				panic("hyperpb: compile hook not set")
-			}
-		}
+		ty := resolveType(l.shared, l.subType, l.fd.Message())
 		newMsg := l.shared.New(ty)
 		return protoreflect.ValueOfMessage(newMsg.ProtoReflect())
 	}
-	switch l.fd.Kind() {
-	case protoreflect.BoolKind:
-		return protoreflect.ValueOfBool(false)
-	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
-		return protoreflect.ValueOfInt32(0)
-	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
-		return protoreflect.ValueOfInt64(0)
-	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
-		return protoreflect.ValueOfUint32(0)
-	case protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
-		return protoreflect.ValueOfUint64(0)
-	case protoreflect.FloatKind:
-		return protoreflect.ValueOfFloat32(0)
-	case protoreflect.DoubleKind:
-		return protoreflect.ValueOfFloat64(0)
-	case protoreflect.StringKind:
-		return protoreflect.ValueOf("")
-	case protoreflect.BytesKind:
-		return protoreflect.ValueOfBytes(nil)
-	case protoreflect.EnumKind:
-		return protoreflect.ValueOfEnum(0)
-	default:
-		return protoreflect.Value{}
-	}
+	return zeroValueForKind(l.fd.Kind())
 }
 
 // cowMap wraps a protoreflect.Map to support copy-on-write mutations.
@@ -222,21 +213,7 @@ func (mp *cowMap) Mutable(key protoreflect.MapKey) protoreflect.Value {
 	if val, ok := mp.m[key.Interface()]; ok {
 		return val
 	}
-	var ty *tdp.Type
-	if mp.valType != nil {
-		ty = mp.valType
-	} else if mp.shared != nil && mp.shared.Library() != nil {
-		if t, ok := mp.shared.Library().Type(mp.fd.MapValue().Message()); ok {
-			ty = t
-		}
-	}
-	if ty == nil {
-		if CompileHook != nil {
-			ty = CompileHook(mp.fd.MapValue().Message())
-		} else {
-			panic("hyperpb: compile hook not set")
-		}
-	}
+	ty := resolveType(mp.shared, mp.valType, mp.fd.MapValue().Message())
 	newMsg := mp.shared.New(ty)
 	val := protoreflect.ValueOfMessage(newMsg.ProtoReflect())
 	mp.m[key.Interface()] = val
@@ -245,46 +222,9 @@ func (mp *cowMap) Mutable(key protoreflect.MapKey) protoreflect.Value {
 
 func (mp *cowMap) NewValue() protoreflect.Value {
 	if mp.fd.MapValue().Message() != nil {
-		var ty *tdp.Type
-		if mp.valType != nil {
-			ty = mp.valType
-		} else if mp.shared != nil && mp.shared.Library() != nil {
-			if t, ok := mp.shared.Library().Type(mp.fd.MapValue().Message()); ok {
-				ty = t
-			}
-		}
-		if ty == nil {
-			if CompileHook != nil {
-				ty = CompileHook(mp.fd.MapValue().Message())
-			} else {
-				panic("hyperpb: compile hook not set")
-			}
-		}
+		ty := resolveType(mp.shared, mp.valType, mp.fd.MapValue().Message())
 		newMsg := mp.shared.New(ty)
 		return protoreflect.ValueOfMessage(newMsg.ProtoReflect())
 	}
-	switch mp.fd.MapValue().Kind() {
-	case protoreflect.BoolKind:
-		return protoreflect.ValueOfBool(false)
-	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
-		return protoreflect.ValueOfInt32(0)
-	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
-		return protoreflect.ValueOfInt64(0)
-	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
-		return protoreflect.ValueOfUint32(0)
-	case protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
-		return protoreflect.ValueOfUint64(0)
-	case protoreflect.FloatKind:
-		return protoreflect.ValueOfFloat32(0)
-	case protoreflect.DoubleKind:
-		return protoreflect.ValueOfFloat64(0)
-	case protoreflect.StringKind:
-		return protoreflect.ValueOf("")
-	case protoreflect.BytesKind:
-		return protoreflect.ValueOfBytes(nil)
-	case protoreflect.EnumKind:
-		return protoreflect.ValueOfEnum(0)
-	default:
-		return protoreflect.Value{}
-	}
+	return zeroValueForKind(mp.fd.MapValue().Kind())
 }

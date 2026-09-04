@@ -412,7 +412,7 @@ func (m *marshaler) fastMap(pf *mfield, mp protoreflect.Map) error {
 	case mcBool:
 		var fv, tv protoreflect.Value
 		mp.Range(func(k protoreflect.MapKey, v protoreflect.Value) bool {
-			if xprotoreflect.GetRawInt(k.Value()) != 0 {
+			if k.Bool() {
 				tv = v
 			} else {
 				fv = v
@@ -437,11 +437,17 @@ func (m *marshaler) fastMap(pf *mfield, mp protoreflect.Map) error {
 	default: // mcInt, mcUint
 		buf := intEntryPool.Get().(*[]intEntry) //nolint:errcheck
 		entries := (*buf)[:0]
+		isUint := pf.keyClass == mcUint
 		mp.Range(func(k protoreflect.MapKey, v protoreflect.Value) bool {
-			entries = append(entries, intEntry{int64(xprotoreflect.GetRawInt(k.Value())), v})
+			var keyVal int64
+			if isUint {
+				keyVal = int64(k.Uint())
+			} else {
+				keyVal = k.Int()
+			}
+			entries = append(entries, intEntry{keyVal, v})
 			return true
 		})
-		isUint := pf.keyClass == mcUint
 		slices.SortFunc(entries, func(a, b intEntry) int {
 			ak, bk := a.k, b.k
 			if isUint {
