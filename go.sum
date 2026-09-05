@@ -70,8 +70,8 @@ github.com/stretchr/testify v1.7.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/
 github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
-github.com/sudorandom/fauxrpc v0.28.0 h1:WvVXRrTb4er0dH4I9zjOEeAxrSySmt/ZAo9ijqQs+5M=
-github.com/sudorandom/fauxrpc v0.28.0/go.mod h1:56mMEWrVt6xB1TRgFKj/oFaW81nuY2Ve41J02o9UERs=
+github.com/sudorandom/fauxrpc v0.25.0 h1:93eA2pMPXRYjHCa19Kiupna41WO7EM9QYu8WgEcfQbI=
+github.com/sudorandom/fauxrpc v0.25.0/go.mod h1:56mMEWrVt6xB1TRgFKj/oFaW81nuY2Ve41J02o9UERs=
 github.com/tiendc/go-deepcopy v1.6.1 h1:uVRTItFeNHkMcLueHS7OCsxgxT9P8MzGB/taUa2Y4Tk=
 github.com/tiendc/go-deepcopy v1.6.1/go.mod h1:toXoeQoUqXOOS/X4sKuiAoSk6elIdqc0pN7MTgOOo2I=
 github.com/timandy/routine v1.1.6 h1:cueNRVPutK8O6387LL7dmYPLNyS6aKlPCPi5qWCLdc8=

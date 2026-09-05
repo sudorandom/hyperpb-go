@@ -12,7 +12,7 @@ require (
 	github.com/planetscale/vtprotobuf v0.6.0
 	github.com/protocolbuffers/protoscope v0.0.0-20221109213918-8e7a6aafa2c9
 	github.com/stretchr/testify v1.11.1
-	github.com/sudorandom/fauxrpc v0.28.0
+	github.com/sudorandom/fauxrpc v0.25.0
 	github.com/tiendc/go-deepcopy v1.6.1
 	github.com/timandy/routine v1.1.6
 	golang.org/x/crypto v0.54.0
