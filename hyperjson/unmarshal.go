@@ -80,8 +80,15 @@ func (o UnmarshalOptions) transcodeUnmarshal(data []byte, msg *hyperpb.Message) 
 	t := transcoderPool.Get().(*transcoder) //nolint:errcheck
 	t.d = decoder{data: data}
 	t.opts = o
-	t.seen = t.seen[:0]
-	defer transcoderPool.Put(t)
+	defer func() {
+		t.d = decoder{}
+		t.opts = UnmarshalOptions{}
+		t.seen = t.seen[:0]
+		if cap(t.seen) > 256 {
+			t.seen = nil
+		}
+		transcoderPool.Put(t)
+	}()
 
 	p := uplanFor(msg.Descriptor())
 
@@ -1018,6 +1025,12 @@ func transcodeAnyPayload(d *decoder, opts UnmarshalOptions) ([]byte, []byte, err
 	}
 
 	*d = tc.d
+	tc.d = decoder{}
+	tc.opts = UnmarshalOptions{}
+	tc.seen = tc.seen[:0]
+	if cap(tc.seen) > 256 {
+		tc.seen = nil
+	}
 	transcoderPool.Put(tc)
 	if err != nil {
 		return nil, nil, err

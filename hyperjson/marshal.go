@@ -126,8 +126,9 @@ func unwrapMessage(m *hyperpb.Message) *dynamic.Message {
 }
 
 type marshaler struct {
-	e    *encoder
-	opts MarshalOptions
+	e     *encoder
+	opts  MarshalOptions
+	depth int
 }
 
 var marshalerPool = sync.Pool{
@@ -142,6 +143,12 @@ var marshalerPool = sync.Pool{
 // fast path for hyperpb messages, the custom well-known-type shapes, and a
 // generic protoreflect walk for foreign message implementations.
 func (m *marshaler) msgValue(pm protoreflect.Message) error {
+	m.depth++
+	if m.depth > maxDepth {
+		return errors.New("hyperjson: exceeded max recursion depth")
+	}
+	defer func() { m.depth-- }()
+
 	if hm, ok := pm.(*hyperpb.Message); ok {
 		return m.fastMessage(unwrapMessage(hm))
 	}

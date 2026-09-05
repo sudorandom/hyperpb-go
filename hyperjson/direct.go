@@ -71,7 +71,22 @@ var writerPool = sync.Pool{New: func() any { return new(writer) }}
 // runs the required-field check on the wrapped message.
 func (o UnmarshalOptions) directUnmarshal(p *dplan, data []byte, m *dynamic.Message, checkInit func() error) error {
 	w := writerPool.Get().(*writer) //nolint:errcheck
-	defer writerPool.Put(w)
+	defer func() {
+		w.d = decoder{}
+		w.opts = UnmarshalOptions{}
+		w.shared = nil
+		w.arena = nil
+		w.buf = nil
+		w.fixups = w.fixups[:0]
+		w.seen = w.seen[:0]
+		if cap(w.fixups) > 1024 {
+			w.fixups = nil
+		}
+		if cap(w.seen) > 256 {
+			w.seen = nil
+		}
+		writerPool.Put(w)
+	}()
 	w.d = decoder{data: data}
 	w.opts = o
 	w.shared = m.Shared

@@ -165,9 +165,7 @@ func parseTimestamp(s string) (int64, int32, error) {
 func appendDuration(buf []byte, seconds int64, nanos int32) ([]byte, error) {
 	if seconds < -maxDurationSeconds || seconds > maxDurationSeconds ||
 		nanos <= -1e9 || nanos >= 1e9 ||
-		(seconds > 0 && nanos < 0) || (seconds < 0 && nanos > 0) ||
-		(seconds == maxDurationSeconds && nanos > 0) ||
-		(seconds == -maxDurationSeconds && nanos < 0) {
+		(seconds > 0 && nanos < 0) || (seconds < 0 && nanos > 0) {
 		return nil, fmt.Errorf("invalid google.protobuf.Duration: seconds=%d nanos=%d", seconds, nanos)
 	}
 	buf = append(buf, '"')
@@ -222,9 +220,6 @@ func parseDuration(s string) (int64, int32, error) {
 		for range 9 - len(fracPart) {
 			nanos *= 10
 		}
-	}
-	if useconds == maxDurationSeconds && nanos > 0 {
-		return fail()
 	}
 	if neg {
 		seconds = -seconds

@@ -470,8 +470,8 @@ func TestDurationBoundaryCases(t *testing.T) {
 	for _, in := range []string{
 		`{"dur": "315576000000s"}`,
 		`{"dur": "-315576000000s"}`,
-		`{"dur": "315576000000.000000000s"}`,
-		`{"dur": "-315576000000.000000000s"}`,
+		`{"dur": "315576000000.999999999s"}`,
+		`{"dur": "-315576000000.999999999s"}`,
 		`{"dur": "0s"}`,
 	} {
 		hm := hyperpb.NewMessage(ct)
@@ -485,12 +485,11 @@ func TestDurationBoundaryCases(t *testing.T) {
 
 	// Invalid durations strictly beyond boundaries
 	for _, in := range []string{
-		`{"dur": "315576000000.000000001s"}`,
-		`{"dur": "315576000000.1s"}`,
-		`{"dur": "-315576000000.000000001s"}`,
-		`{"dur": "-315576000000.1s"}`,
 		`{"dur": "315576000001s"}`,
 		`{"dur": "-315576000001s"}`,
+		`{"dur": "315576000001.000000001s"}`,
+		`{"dur": "-315576000001.000000001s"}`,
+		`{"dur": "315576000000.1000000000s"}`, // 10 fractional digits
 	} {
 		hm := hyperpb.NewMessage(ct)
 		assert.Error(t, hyperjson.Unmarshal([]byte(in), hm), "expected error for: %s", in)
