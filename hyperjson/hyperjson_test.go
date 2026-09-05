@@ -31,12 +31,13 @@ import (
 	_ "google.golang.org/protobuf/types/known/durationpb"
 	_ "google.golang.org/protobuf/types/known/emptypb"
 	_ "google.golang.org/protobuf/types/known/fieldmaskpb"
-	_ "google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/structpb"
 	_ "google.golang.org/protobuf/types/known/timestamppb"
 	_ "google.golang.org/protobuf/types/known/wrapperspb"
 
 	"buf.build/go/hyperpb"
 	"buf.build/go/hyperpb/hyperjson"
+	conformance "buf.build/go/hyperpb/internal/gen/conformance"
 	testpb "buf.build/go/hyperpb/internal/gen/test"
 )
 
@@ -521,4 +522,367 @@ func TestCustomExtensionResolver(t *testing.T) {
 	err := opts.Unmarshal([]byte(`{"[hyperpb.test.b1]": 42}`), hm)
 	require.NoError(t, err)
 	assert.True(t, res.called, "custom ExtensionResolver should have been called")
+}
+
+func TestMarshalUseEnumNumbers(t *testing.T) {
+	t.Parallel()
+	md := buildWKTFile(t)
+	ct := compileFor(t, md)
+	hm := hyperpb.NewMessage(ct)
+
+	// Field 18 is NullValue enum
+	fdNV := md.Fields().ByName("nv")
+	hm.Set(fdNV, protoreflect.ValueOfEnum(0))
+
+	// NullValue should emit null in both modes (even with UseEnumNumbers: true)
+	outName, err := hyperjson.MarshalOptions{UseEnumNumbers: false, EmitDefaultValues: true}.Marshal(hm)
+	require.NoError(t, err)
+	assert.Contains(t, string(outName), `"nv":null`)
+
+	outNum, err := hyperjson.MarshalOptions{UseEnumNumbers: true, EmitDefaultValues: true}.Marshal(hm)
+	require.NoError(t, err)
+	assert.Contains(t, string(outNum), `"nv":null`)
+
+	// Normal enum in a proto message map
+	enMd := mdOf(&testpb.Maps{})
+	enCt := compileFor(t, enMd)
+	enHm := hyperpb.NewMessage(enCt)
+	m1dFd := enMd.Fields().ByName("m1d")
+	mp := enHm.Mutable(m1dFd).Map()
+	mp.Set(protoreflect.ValueOfInt32(42).MapKey(), protoreflect.ValueOfEnum(1)) // testpb.Enum_ENUM_1
+
+	outEnName, err := hyperjson.MarshalOptions{UseEnumNumbers: false}.Marshal(enHm)
+	require.NoError(t, err)
+	assert.Contains(t, string(outEnName), `"42":"ENUM_1"`)
+
+	outEnNum, err := hyperjson.MarshalOptions{UseEnumNumbers: true}.Marshal(enHm)
+	require.NoError(t, err)
+	assert.Contains(t, string(outEnNum), `"42":1`)
+
+	// Normal singular enum and oneof NullValue in TestAllTypesProto3
+	cProto := &conformance.TestAllTypesProto3{
+		OptionalNestedEnum: conformance.TestAllTypesProto3_BAR,
+		OneofField:         &conformance.TestAllTypesProto3_OneofNullValue{OneofNullValue: structpb.NullValue_NULL_VALUE},
+	}
+	cWire, err := proto.Marshal(cProto)
+	require.NoError(t, err)
+	cHm := hyperpb.NewMessage(compileFor(t, mdOf(cProto)))
+	require.NoError(t, cHm.Unmarshal(cWire))
+
+	cName, err := hyperjson.MarshalOptions{UseEnumNumbers: false}.Marshal(cHm)
+	require.NoError(t, err)
+	assert.Contains(t, string(cName), `"optionalNestedEnum":"BAR"`)
+	assert.Contains(t, string(cName), `"oneofNullValue":null`)
+
+	cNum, err := hyperjson.MarshalOptions{UseEnumNumbers: true}.Marshal(cHm)
+	require.NoError(t, err)
+	assert.Contains(t, string(cNum), `"optionalNestedEnum":1`)
+	assert.Contains(t, string(cNum), `"oneofNullValue":null`)
+}
+
+func TestMarshalMultilineIndent(t *testing.T) {
+	t.Parallel()
+	gProto := &testpb.Graph{V: 1, S: &testpb.Graph{V: 2}, R: []*testpb.Graph{{V: 3}}}
+	gWire, err := proto.Marshal(gProto)
+	require.NoError(t, err)
+
+	gCt := compileFor(t, mdOf(gProto))
+	gHm := hyperpb.NewMessage(gCt)
+	require.NoError(t, gHm.Unmarshal(gWire))
+
+	// Invalid indent
+	_, err = hyperjson.MarshalOptions{Indent: " invalid"}.Marshal(gHm)
+	require.Error(t, err)
+
+	// Default 2 spaces
+	outDef, err := hyperjson.MarshalOptions{Multiline: true}.Marshal(gHm)
+	require.NoError(t, err)
+	expectedDef, err := protojson.MarshalOptions{Multiline: true}.Marshal(gProto)
+	require.NoError(t, err)
+	assert.Equal(t, string(expectedDef), string(outDef))
+
+	// Tab indent
+	outTab, err := hyperjson.MarshalOptions{Indent: "\t"}.Marshal(gHm)
+	require.NoError(t, err)
+	expectedTab, err := protojson.MarshalOptions{Indent: "\t"}.Marshal(gProto)
+	require.NoError(t, err)
+	assert.Equal(t, string(expectedTab), string(outTab))
+
+	// Empty message multiline
+	emptyProto := &testpb.Graph{}
+	emptyHm := hyperpb.NewMessage(gCt)
+	outEmpty, err := hyperjson.MarshalOptions{Multiline: true}.Marshal(emptyHm)
+	require.NoError(t, err)
+	expectedEmpty, err := protojson.MarshalOptions{Multiline: true}.Marshal(emptyProto)
+	require.NoError(t, err)
+	assert.Equal(t, string(expectedEmpty), string(outEmpty))
+}
+
+func TestMarshalEmitDefaultValues(t *testing.T) {
+	t.Parallel()
+
+	// 1. Scalars
+	scProto := &testpb.Scalars{}
+	scCt := compileFor(t, mdOf(scProto))
+	scHm := hyperpb.NewMessage(scCt)
+	outSc, err := hyperjson.MarshalOptions{EmitDefaultValues: true}.Marshal(scHm)
+	require.NoError(t, err)
+	expSc, err := protojson.MarshalOptions{EmitDefaultValues: true}.Marshal(scProto)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(expSc), string(outSc))
+
+	// 2. Graph (message field omitted, repeated field emitted as [])
+	gProto := &testpb.Graph{}
+	gCt := compileFor(t, mdOf(gProto))
+	gHm := hyperpb.NewMessage(gCt)
+	outG, err := hyperjson.MarshalOptions{EmitDefaultValues: true}.Marshal(gHm)
+	require.NoError(t, err)
+	expG, err := protojson.MarshalOptions{EmitDefaultValues: true}.Marshal(gProto)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(expG), string(outG))
+
+	// 3. Repeated (all [] emitted)
+	rProto := &testpb.Repeated{}
+	rCt := compileFor(t, mdOf(rProto))
+	rHm := hyperpb.NewMessage(rCt)
+	outR, err := hyperjson.MarshalOptions{EmitDefaultValues: true}.Marshal(rHm)
+	require.NoError(t, err)
+	expR, err := protojson.MarshalOptions{EmitDefaultValues: true}.Marshal(rProto)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(expR), string(outR))
+
+	// 4. Maps (all {} emitted)
+	mProto := &testpb.Maps{}
+	mCt := compileFor(t, mdOf(mProto))
+	mHm := hyperpb.NewMessage(mCt)
+	outM, err := hyperjson.MarshalOptions{EmitDefaultValues: true}.Marshal(mHm)
+	require.NoError(t, err)
+	expM, err := protojson.MarshalOptions{EmitDefaultValues: true}.Marshal(mProto)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(expM), string(outM))
+
+	// 5. Oneof (unpopulated oneofs omitted)
+	oProto := &testpb.Oneof{}
+	oCt := compileFor(t, mdOf(oProto))
+	oHm := hyperpb.NewMessage(oCt)
+	outO, err := hyperjson.MarshalOptions{EmitDefaultValues: true}.Marshal(oHm)
+	require.NoError(t, err)
+	expO, err := protojson.MarshalOptions{EmitDefaultValues: true}.Marshal(oProto)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(expO), string(outO))
+}
+
+func TestMarshalEmitUnpopulated(t *testing.T) {
+	t.Parallel()
+
+	// 1. Scalars
+	scProto := &testpb.Scalars{}
+	scCt := compileFor(t, mdOf(scProto))
+	scHm := hyperpb.NewMessage(scCt)
+	outSc, err := hyperjson.MarshalOptions{EmitUnpopulated: true}.Marshal(scHm)
+	require.NoError(t, err)
+	expSc, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(scProto)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(expSc), string(outSc))
+
+	// 2. Graph (message field emitted as null, repeated as [])
+	gProto := &testpb.Graph{}
+	gCt := compileFor(t, mdOf(gProto))
+	gHm := hyperpb.NewMessage(gCt)
+	outG, err := hyperjson.MarshalOptions{EmitUnpopulated: true}.Marshal(gHm)
+	require.NoError(t, err)
+	expG, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(gProto)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(expG), string(outG))
+
+	// 3. Repeated (all [] emitted)
+	rProto := &testpb.Repeated{}
+	rCt := compileFor(t, mdOf(rProto))
+	rHm := hyperpb.NewMessage(rCt)
+	outR, err := hyperjson.MarshalOptions{EmitUnpopulated: true}.Marshal(rHm)
+	require.NoError(t, err)
+	expR, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(rProto)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(expR), string(outR))
+
+	// 4. Maps (all {} emitted)
+	mProto := &testpb.Maps{}
+	mCt := compileFor(t, mdOf(mProto))
+	mHm := hyperpb.NewMessage(mCt)
+	outM, err := hyperjson.MarshalOptions{EmitUnpopulated: true}.Marshal(mHm)
+	require.NoError(t, err)
+	expM, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(mProto)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(expM), string(outM))
+
+	// 5. Oneof (unpopulated oneofs omitted)
+	oProto := &testpb.Oneof{}
+	oCt := compileFor(t, mdOf(oProto))
+	oHm := hyperpb.NewMessage(oCt)
+	outO, err := hyperjson.MarshalOptions{EmitUnpopulated: true}.Marshal(oHm)
+	require.NoError(t, err)
+	expO, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(oProto)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(expO), string(outO))
+}
+
+func TestProtoMessageMarshal(t *testing.T) {
+	t.Parallel()
+
+	// 1. Populated Scalars
+	sc := &testpb.Scalars{
+		A1:  42,
+		A2:  1234567890123,
+		A13: true,
+		A14: "hello world",
+		A15: []byte("bytes data"),
+		B1:  proto.Int32(99),
+	}
+	gotSc, err := hyperjson.Marshal(sc)
+	require.NoError(t, err)
+	wantSc, err := protojson.Marshal(sc)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(wantSc), string(gotSc))
+
+	// MarshalAppend
+	prefix := []byte("sc:")
+	gotApp, err := hyperjson.MarshalAppend(prefix, sc)
+	require.NoError(t, err)
+	assert.Equal(t, string(append(prefix, gotSc...)), string(gotApp))
+
+	// 2. Recursive Graph
+	g := &testpb.Graph{
+		V: 1,
+		S: &testpb.Graph{V: 2, S: &testpb.Graph{V: 3}},
+		R: []*testpb.Graph{{V: 10}, {V: 20}},
+	}
+	gotG, err := hyperjson.Marshal(g)
+	require.NoError(t, err)
+	wantG, err := protojson.Marshal(g)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(wantG), string(gotG))
+
+	// Multiline on proto.Message
+	gotGMulti, err := hyperjson.MarshalOptions{Multiline: true}.Marshal(g)
+	require.NoError(t, err)
+	wantGMulti, err := protojson.MarshalOptions{Multiline: true}.Marshal(g)
+	require.NoError(t, err)
+	assert.Equal(t, string(wantGMulti), string(gotGMulti))
+
+	// 3. Conformance message with enums
+	c := &conformance.TestAllTypesProto3{
+		OptionalInt32:      100,
+		OptionalNestedEnum: conformance.TestAllTypesProto3_BAR,
+		OneofField:         &conformance.TestAllTypesProto3_OneofNullValue{OneofNullValue: structpb.NullValue_NULL_VALUE},
+	}
+	gotName, err := hyperjson.MarshalOptions{UseEnumNumbers: false}.Marshal(c)
+	require.NoError(t, err)
+	assert.Contains(t, string(gotName), `"optionalNestedEnum":"BAR"`)
+	assert.Contains(t, string(gotName), `"oneofNullValue":null`)
+
+	gotNum, err := hyperjson.MarshalOptions{UseEnumNumbers: true}.Marshal(c)
+	require.NoError(t, err)
+	assert.Contains(t, string(gotNum), `"optionalNestedEnum":1`)
+	assert.Contains(t, string(gotNum), `"oneofNullValue":null`)
+}
+
+func TestProtoMessageUnmarshal(t *testing.T) {
+	t.Parallel()
+
+	// 1. Scalars
+	jsonIn := `{"a1": 42, "a2": "1234567890123", "a13": true, "a14": "hello", "a15": "Ynl0ZXM=", "b1": 99}`
+	oracleSc := &testpb.Scalars{}
+	require.NoError(t, protojson.Unmarshal([]byte(jsonIn), oracleSc))
+
+	gotSc := &testpb.Scalars{}
+	require.NoError(t, hyperjson.Unmarshal([]byte(jsonIn), gotSc))
+	assert.True(t, proto.Equal(oracleSc, gotSc), "expected Equal:\n  oracle: %v\n  got:    %v", oracleSc, gotSc)
+
+	// 2. Graph
+	jsonG := `{"v": 1, "s": {"v": 2, "s": {"v": 3}}, "r": [{"v": 10}, {"v": 20}]}`
+	oracleG := &testpb.Graph{}
+	require.NoError(t, protojson.Unmarshal([]byte(jsonG), oracleG))
+
+	gotG := &testpb.Graph{}
+	require.NoError(t, hyperjson.Unmarshal([]byte(jsonG), gotG))
+	assert.True(t, proto.Equal(oracleG, gotG), "expected Equal:\n  oracle: %v\n  got:    %v", oracleG, gotG)
+
+	// 3. Conformance with enums and discard unknown
+	jsonConf := `{"optionalInt32": 100, "optionalNestedEnum": "BAR", "oneofNullValue": null, "unknownExtra": 123}`
+	oracleConf := &conformance.TestAllTypesProto3{}
+	require.NoError(t, protojson.UnmarshalOptions{DiscardUnknown: true}.Unmarshal([]byte(jsonConf), oracleConf))
+
+	gotConf := &conformance.TestAllTypesProto3{}
+	require.NoError(t, hyperjson.UnmarshalOptions{DiscardUnknown: true}.Unmarshal([]byte(jsonConf), gotConf))
+	assert.True(t, proto.Equal(oracleConf, gotConf), "expected Equal:\n  oracle: %v\n  got:    %v", oracleConf, gotConf)
+
+	// Reject unknown without DiscardUnknown
+	err := hyperjson.Unmarshal([]byte(jsonConf), gotConf)
+	assert.Error(t, err)
+}
+
+func TestNilProtoMessage(t *testing.T) {
+	t.Parallel()
+
+	var nilProto *testpb.Scalars
+	_, err := hyperjson.Marshal(nilProto)
+	require.Error(t, err)
+
+	_, err = hyperjson.MarshalAppend(nil, nilProto)
+	require.Error(t, err)
+
+	err = hyperjson.Unmarshal([]byte("{}"), nilProto)
+	require.Error(t, err)
+
+	_, err = hyperjson.Marshal(nil)
+	require.Error(t, err)
+
+	err = hyperjson.Unmarshal([]byte("{}"), nil)
+	require.Error(t, err)
+}
+
+func TestAllowPartial(t *testing.T) {
+	t.Parallel()
+
+	// 1. Standard proto.Message with required fields
+	req := &testpb.Required{}
+
+	// Marshal without AllowPartial -> error
+	_, err := hyperjson.Marshal(req)
+	require.Error(t, err)
+
+	// Marshal with AllowPartial -> succeeds
+	jsonBytes, err := hyperjson.MarshalOptions{AllowPartial: true}.Marshal(req)
+	require.NoError(t, err)
+	assert.JSONEq(t, "{}", string(jsonBytes))
+
+	// Unmarshal without AllowPartial -> error
+	got := &testpb.Required{}
+	err = hyperjson.Unmarshal([]byte("{}"), got)
+	require.Error(t, err)
+
+	// Unmarshal with AllowPartial -> succeeds
+	gotPartial := &testpb.Required{}
+	err = hyperjson.UnmarshalOptions{AllowPartial: true}.Unmarshal([]byte("{}"), gotPartial)
+	require.NoError(t, err)
+
+	// 2. hyperpb.Message with required fields
+	md := (&testpb.Required{}).ProtoReflect().Descriptor()
+	ct := hyperpb.CompileMessageDescriptor(md)
+
+	hm := hyperpb.NewMessage(ct)
+	_, err = hyperjson.Marshal(hm)
+	require.Error(t, err)
+
+	jsonHM, err := hyperjson.MarshalOptions{AllowPartial: true}.Marshal(hm)
+	require.NoError(t, err)
+	assert.JSONEq(t, "{}", string(jsonHM))
+
+	hmGot := hyperpb.NewMessage(ct)
+	err = hyperjson.Unmarshal([]byte("{}"), hmGot)
+	require.Error(t, err)
+
+	hmGotPartial := hyperpb.NewMessage(ct)
+	err = hyperjson.UnmarshalOptions{AllowPartial: true}.Unmarshal([]byte("{}"), hmGotPartial)
+	require.NoError(t, err)
 }

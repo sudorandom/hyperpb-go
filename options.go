@@ -19,6 +19,8 @@ import (
 
 	"google.golang.org/protobuf/reflect/protoregistry"
 
+	"buf.build/go/hyperpb/internal/structdec"
+	"buf.build/go/hyperpb/internal/structenc"
 	"buf.build/go/hyperpb/internal/tdp/compiler"
 	"buf.build/go/hyperpb/internal/tdp/vm"
 )
@@ -59,8 +61,21 @@ func WithProfile(profile *Profile) CompileOption {
 	return CompileOption{func(c *compiler.Options) { c.Profile = &profile.impl }}
 }
 
-// UnmarshalOption is a configuration setting for [Message.Unmarshal].
-type UnmarshalOption struct{ apply func(*vm.Options) }
+// UnmarshalOption is a configuration setting for [Message.Unmarshal] and [Unmarshal].
+type UnmarshalOption struct {
+	applyVM     func(*vm.Options)
+	applyStruct func(*structdec.Options)
+}
+
+func toStructdecOptions(options ...UnmarshalOption) structdec.Options {
+	opts := structdec.DefaultOptions()
+	for _, opt := range options {
+		if opt.applyStruct != nil {
+			opt.applyStruct(&opts)
+		}
+	}
+	return opts
+}
 
 // WithMaxDecodeMisses sets the number of decode misses allowed in the parser before
 // switching to the slow path.
@@ -69,14 +84,19 @@ type UnmarshalOption struct{ apply func(*vm.Options) }
 // potential DoS vector due to quadratic worst case performance. The default
 // is 4.
 func WithMaxDecodeMisses(maxMisses int) UnmarshalOption {
-	return UnmarshalOption{func(opts *vm.Options) { opts.MaxMisses = maxMisses }}
+	return UnmarshalOption{
+		applyVM: func(opts *vm.Options) { opts.MaxMisses = maxMisses },
+	}
 }
 
 // WithMaxDepth sets the maximum recursion depth for the parser.
 //
 // Setting a large value enables potential DoS vectors.
 func WithMaxDepth(depth int) UnmarshalOption {
-	return UnmarshalOption{func(opts *vm.Options) { opts.MaxDepth = min(depth, math.MaxUint32) }}
+	return UnmarshalOption{
+		applyVM:     func(opts *vm.Options) { opts.MaxDepth = min(depth, math.MaxUint32) },
+		applyStruct: func(opts *structdec.Options) { opts.MaxDepth = depth },
+	}
 }
 
 // WithDiscardUnknown sets whether unknown fields should be discarded while
@@ -85,13 +105,19 @@ func WithMaxDepth(depth int) UnmarshalOption {
 // Setting this option will break round-tripping, but will also improve parse
 // speeds of messages with many unknown fields.
 func WithDiscardUnknown(discard bool) UnmarshalOption {
-	return UnmarshalOption{func(opts *vm.Options) { opts.DiscardUnknown = discard }}
+	return UnmarshalOption{
+		applyVM:     func(opts *vm.Options) { opts.DiscardUnknown = discard },
+		applyStruct: func(opts *structdec.Options) { opts.DiscardUnknown = discard },
+	}
 }
 
 // WithAllowInvalidUTF8 sets whether UTF-8 is validated when parsing string
 // fields originating from non-proto2 files.
 func WithAllowInvalidUTF8(allow bool) UnmarshalOption {
-	return UnmarshalOption{func(opts *vm.Options) { opts.AllowInvalidUTF8 = allow }}
+	return UnmarshalOption{
+		applyVM:     func(opts *vm.Options) { opts.AllowInvalidUTF8 = allow },
+		applyStruct: func(opts *structdec.Options) { opts.AllowInvalidUTF8 = allow },
+	}
 }
 
 // WithAllowAlias sets whether aliasing the input buffer is allowed. This avoids
@@ -99,7 +125,10 @@ func WithAllowInvalidUTF8(allow bool) UnmarshalOption {
 //
 // Analogous to [protoimpl.UnmarshalAliasBuffer].
 func WithAllowAlias(allow bool) UnmarshalOption {
-	return UnmarshalOption{func(opts *vm.Options) { opts.AllowAlias = allow }}
+	return UnmarshalOption{
+		applyVM:     func(opts *vm.Options) { opts.AllowAlias = allow },
+		applyStruct: func(opts *structdec.Options) { opts.AllowAlias = allow },
+	}
 }
 
 // WithRecordProfile sets a profiler for an unmarshaling operation. Rate is a
@@ -111,12 +140,57 @@ func WithAllowAlias(allow bool) UnmarshalOption {
 // which can be used to recompile this type to be more efficient using
 // [MessageType.Recompile].
 func WithRecordProfile(profile *Profile, rate float64) UnmarshalOption {
-	return UnmarshalOption{func(opts *vm.Options) {
-		if profile == nil {
-			opts.Recorder = nil
-		} else {
-			opts.Recorder = &profile.impl
+	return UnmarshalOption{
+		applyVM: func(opts *vm.Options) {
+			if profile == nil {
+				opts.Recorder = nil
+			} else {
+				opts.Recorder = &profile.impl
+			}
+			opts.ProfileRate = rate
+		},
+	}
+}
+
+// MarshalOption is a configuration setting for [Marshal] and [MarshalAppend].
+type MarshalOption struct {
+	applyStruct func(*structenc.Options)
+}
+
+func toStructencOptions(options ...MarshalOption) structenc.Options {
+	opts := structenc.DefaultOptions()
+	for _, opt := range options {
+		if opt.applyStruct != nil {
+			opt.applyStruct(&opts)
 		}
-		opts.ProfileRate = rate
-	}}
+	}
+	return opts
+}
+
+// WithDeterministic sets whether map fields are marshaled deterministically.
+func WithDeterministic(deterministic bool) MarshalOption {
+	return MarshalOption{
+		applyStruct: func(opts *structenc.Options) { opts.Deterministic = deterministic },
+	}
+}
+
+// WithAllowPartial sets whether missing required fields are permitted while unmarshaling.
+func WithAllowPartial(allow bool) UnmarshalOption {
+	return UnmarshalOption{
+		applyStruct: func(opts *structdec.Options) { opts.AllowPartial = allow },
+	}
+}
+
+// WithMarshalAllowPartial sets whether missing required fields are permitted while marshaling.
+func WithMarshalAllowPartial(allow bool) MarshalOption {
+	return MarshalOption{
+		applyStruct: func(opts *structenc.Options) { opts.AllowPartial = allow },
+	}
+}
+
+// WithMarshalAllowInvalidUTF8 sets whether invalid UTF-8 strings are permitted during marshaling.
+func WithMarshalAllowInvalidUTF8(allow bool) MarshalOption {
+	return MarshalOption{
+		applyStruct: func(opts *structenc.Options) { opts.AllowInvalidUTF8 = allow },
+	}
 }

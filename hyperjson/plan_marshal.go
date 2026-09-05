@@ -243,10 +243,12 @@ func rawBytes(v protoreflect.Value) []byte {
 
 // fastMessage marshals a hyperpb message through its compiled plan.
 func (m *marshaler) fastMessage(dm *dynamic.Message) error {
-	// A mutated message carries an overlay that the raw getter thunks
-	// bypass; marshal it through the overlay-aware reflection surface
-	// instead. Clean messages (the overwhelmingly common case) pay one nil
-	// map check.
+	// A mutated message, multiline formatted output, or unpopulated/default
+	// field emission routes through the reflection surface. Clean messages
+	// pay one nil map check.
+	if m.opts.Multiline || m.opts.EmitUnpopulated || m.opts.EmitDefaultValues {
+		return m.overlayMessage(dm.ProtoReflect())
+	}
 	if dm.Shared != nil && dm.Shared.Overlays != nil {
 		if _, ok := dm.Shared.Overlays[dm]; ok {
 			return m.overlayMessage(dm.ProtoReflect())
@@ -371,11 +373,13 @@ func (m *marshaler) fastScalar(kind uint8, enums map[protoreflect.EnumNumber]str
 		e.base64(rawBytes(v))
 	case mkEnum:
 		n := protoreflect.EnumNumber(xprotoreflect.GetRawInt(v))
-		if name, ok := enums[n]; ok {
-			e.raw(name)
-		} else {
-			e.int32(int32(n))
+		if !m.opts.UseEnumNumbers {
+			if name, ok := enums[n]; ok {
+				e.raw(name)
+				break
+			}
 		}
+		e.int32(int32(n))
 	case mkNullEnum:
 		e.raw("null")
 	case mkMessage:

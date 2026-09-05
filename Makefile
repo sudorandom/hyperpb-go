@@ -27,7 +27,7 @@ export PATH := $(abspath $(BIN)):$(PATH)
 export GOBIN := $(abspath $(BIN))
 
 COPYRIGHT_YEARS := 2025
-LICENSE_IGNORE := testdata/
+LICENSE_IGNORE := testdata/|internal/gen/conformance/
 
 GO_VERSION := go1.26.0
 BUF_VERSION := v1.56.0 # Keep in sync w/ .github/workflows/buf.yaml.
@@ -144,7 +144,7 @@ generate: internal/gen/*/*.pb.go $(BIN)/license-header ## Regenerate code and li
 		--license-type apache \
 		--copyright-holder "Buf Technologies, Inc." \
 		--year-range "$(COPYRIGHT_YEARS)" \
-		--ignore $(LICENSE_IGNORE)
+		--ignore "$(LICENSE_IGNORE)"
 
 .PHONY: upgrade
 upgrade: ## Upgrade dependencies
@@ -158,8 +158,7 @@ checkgenerate:
 	git --no-pager diff --exit-code >&2
 
 internal/gen/*/*.pb.go: $(BIN)/buf internal/proto/*/*/*.proto internal/proto/*/*/*/*.proto
-	$(BIN)/buf generate --clean
-	$(BIN)/buf generate --template buf.vt.gen.yaml
+	$(BIN)/buf generate
 
 .PHONY: $(BIN)/hypertest
 $(BIN)/hypertest: generate

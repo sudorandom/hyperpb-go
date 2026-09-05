@@ -25,10 +25,12 @@ import (
 	"sync"
 
 	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"buf.build/go/hyperpb"
+	"buf.build/go/hyperpb/internal/structdec"
 )
 
 const (
@@ -43,35 +45,122 @@ type UnmarshalOptions struct {
 	// of returning an error.
 	DiscardUnknown bool
 
+	// AllowPartial allows unmarshaling messages with missing required fields.
+	AllowPartial bool
+
 	// Resolver is used to resolve google.protobuf.Any type URLs. If nil,
 	// protoregistry.GlobalTypes is used.
 	Resolver Resolver
 }
 
-// Unmarshal parses protojson-encoded data into msg, which must be freshly
-// allocated (see hyperpb.Shared.NewMessage) and not yet unmarshaled.
+// Unmarshal parses protojson-encoded data into msg.
 //
-// This is a proof of concept implemented as a JSON-to-wire transcoder: the
-// JSON document is converted directly to wire format guided by a compiled
-// per-type plan, and the result is fed to hyperpb's wire-format parser. The
-// message zero-copies into the transcoded buffer, which it retains.
-func Unmarshal(data []byte, msg *hyperpb.Message) error {
+// For hyperpb messages, msg must be freshly allocated (see hyperpb.Shared.NewMessage)
+// and not yet unmarshaled.
+// For standard proto.Message implementations, msg is populated using proto.Unmarshal
+// over the transcoded wire bytes.
+func Unmarshal(data []byte, msg proto.Message) error {
 	return UnmarshalOptions{}.Unmarshal(data, msg)
 }
 
 // Unmarshal parses protojson-encoded data into msg.
-func (o UnmarshalOptions) Unmarshal(data []byte, msg *hyperpb.Message) error {
+func (o UnmarshalOptions) Unmarshal(data []byte, msg proto.Message) error {
 	if msg == nil {
 		return errors.New("hyperjson: message is nil")
 	}
-	dm := msg.Unwrap()
-	if dm.Shared != nil && dm.Shared.Overlays != nil {
-		delete(dm.Shared.Overlays, dm)
+	pm := msg.ProtoReflect()
+	if !pm.IsValid() {
+		return errors.New("hyperjson: message is nil")
 	}
-	if dp := dplanFor(dm.Type()); dp.direct {
-		return o.directUnmarshal(dp, data, dm, msg.Initialized)
+	if hm, ok := msg.(*hyperpb.Message); ok {
+		dm := hm.Unwrap()
+		if dm.Shared != nil && dm.Shared.Overlays != nil {
+			delete(dm.Shared.Overlays, dm)
+		}
+		var err error
+		if dp := dplanFor(dm.Type()); dp.direct {
+			err = o.directUnmarshal(dp, data, dm, hm.Initialized)
+		} else {
+			err = o.transcodeUnmarshal(data, hm)
+		}
+		if err != nil {
+			return err
+		}
+		if !o.AllowPartial {
+			if err := proto.CheckInitialized(msg); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
-	return o.transcodeUnmarshal(data, msg)
+	if err := o.unmarshalProto(data, msg); err != nil {
+		return err
+	}
+	if !o.AllowPartial {
+		if err := proto.CheckInitialized(msg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (o UnmarshalOptions) unmarshalProto(data []byte, msg proto.Message) error {
+	t := transcoderPool.Get().(*transcoder) //nolint:errcheck
+	t.d = decoder{data: data}
+	t.opts = o
+	defer func() {
+		t.d = decoder{}
+		t.opts = UnmarshalOptions{}
+		t.seen = t.seen[:0]
+		if cap(t.seen) > 256 {
+			t.seen = nil
+		}
+		transcoderPool.Put(t)
+	}()
+
+	p := uplanFor(msg.ProtoReflect().Descriptor())
+
+	wire := make([]byte, 0, len(data))
+	var err error
+	if p.wkt != wkNone {
+		wire, err = t.wktContent(p, wire)
+	} else {
+		wire, err = t.message(p, wire, false)
+	}
+	if err != nil {
+		return err
+	}
+	if !t.d.atEOF() {
+		return t.d.errf("unexpected data after top-level value")
+	}
+
+	if o.Resolver == nil {
+		dec, err := structdec.Get(msg)
+		if err == nil {
+			sopts := structdec.DefaultOptions()
+			sopts.DiscardUnknown = o.DiscardUnknown
+			sopts.AllowAlias = true
+			sopts.AllowPartial = o.AllowPartial
+			if err := dec.DecodeMessage(msg, wire, sopts); err == nil {
+				return nil
+			}
+		}
+	}
+
+	uopts := proto.UnmarshalOptions{
+		DiscardUnknown: o.DiscardUnknown,
+		AllowPartial:   o.AllowPartial,
+	}
+	if r, ok := o.Resolver.(interface {
+		FindExtensionByName(field protoreflect.FullName) (protoreflect.ExtensionType, error)
+		FindExtensionByNumber(message protoreflect.FullName, field protoreflect.FieldNumber) (protoreflect.ExtensionType, error)
+	}); ok {
+		uopts.Resolver = r
+	}
+	if err := uopts.Unmarshal(wire, msg); err != nil {
+		return fmt.Errorf("hyperjson: transcoded wire failed to parse: %w", err)
+	}
+	return nil
 }
 
 // transcodeUnmarshal is the JSON-to-wire fallback used when the direct

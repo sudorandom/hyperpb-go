@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
@@ -50,39 +51,86 @@ func findExtension(r Resolver, name protoreflect.FullName) (protoreflect.Extensi
 
 // MarshalOptions configures Marshal.
 type MarshalOptions struct {
+	// Multiline specifies whether the marshaler should format the output in
+	// indented-form with every textual element on a new line.
+	// If Indent is an empty string, then an arbitrary indent of two spaces is chosen.
+	Multiline bool
+
+	// Indent specifies the set of indentation characters to use in a multiline
+	// formatted output such that every entry is preceded by Indent and
+	// terminated by a newline. If non-empty, then Multiline is treated as true.
+	// Indent can only be composed of space or tab characters.
+	Indent string
+
 	// UseProtoNames emits fields under their proto (snake_case) names instead
 	// of their JSON (lowerCamelCase) names.
 	UseProtoNames bool
+
+	// UseEnumNumbers emits enum values as numbers.
+	UseEnumNumbers bool
+
+	// EmitUnpopulated specifies whether to emit unpopulated fields. It does not
+	// emit unpopulated oneof fields or unpopulated extension fields.
+	EmitUnpopulated bool
+
+	// EmitDefaultValues specifies whether to emit default-valued primitive fields,
+	// empty lists, and empty maps.
+	// EmitUnpopulated takes precedence over EmitDefaultValues.
+	EmitDefaultValues bool
+
+	// AllowPartial allows marshaling messages with missing required fields.
+	AllowPartial bool
 
 	// Resolver is used to resolve google.protobuf.Any type URLs. If nil,
 	// protoregistry.GlobalTypes is used.
 	Resolver Resolver
 }
 
-// Marshal serializes a hyperpb message to protojson-compatible JSON.
+// Marshal serializes a protobuf message to protojson-compatible JSON.
 //
-// It walks the message's compiled tdp tables directly instead of going
-// through generic protoreflect, which is what makes it faster than passing a
-// hyperpb message to protojson.Marshal.
-func Marshal(msg *hyperpb.Message) ([]byte, error) {
+// For hyperpb messages, it walks the compiled tdp tables directly.
+// For standard generated proto.Message implementations, it walks the
+// protoreflect surface.
+func Marshal(msg proto.Message) ([]byte, error) {
 	return MarshalOptions{}.Marshal(msg)
 }
 
 // MarshalAppend appends the protojson-compatible JSON serialization of msg to dst.
-func MarshalAppend(dst []byte, msg *hyperpb.Message) ([]byte, error) {
+func MarshalAppend(dst []byte, msg proto.Message) ([]byte, error) {
 	return MarshalOptions{}.MarshalAppend(dst, msg)
 }
 
-// Marshal serializes a hyperpb message to protojson-compatible JSON.
-func (o MarshalOptions) Marshal(msg *hyperpb.Message) ([]byte, error) {
+// Marshal serializes a protobuf message to protojson-compatible JSON.
+func (o MarshalOptions) Marshal(msg proto.Message) ([]byte, error) {
 	if msg == nil {
 		return nil, errors.New("hyperjson: message is nil")
+	}
+	pm := msg.ProtoReflect()
+	if !pm.IsValid() {
+		return nil, errors.New("hyperjson: message is nil")
+	}
+	if !o.AllowPartial {
+		if err := proto.CheckInitialized(msg); err != nil {
+			return nil, err
+		}
+	}
+	var err error
+	o, err = o.normalize()
+	if err != nil {
+		return nil, err
 	}
 	m := marshalerPool.Get().(*marshaler) //nolint:errcheck
 	m.opts = o
 	m.e.buf = m.e.buf[:0]
-	if err := m.msgValue(msg); err != nil {
+	m.e.indent = ""
+	m.e.depth = 0
+	if o.Multiline {
+		m.e.indent = o.Indent
+	}
+	if err := m.msgValue(pm); err != nil {
 		m.opts = MarshalOptions{}
+		m.e.indent = ""
+		m.e.depth = 0
 		if cap(m.e.buf) <= 1<<20 {
 			marshalerPool.Put(m)
 		}
@@ -90,6 +138,8 @@ func (o MarshalOptions) Marshal(msg *hyperpb.Message) ([]byte, error) {
 	}
 	out := m.e.bytes()
 	m.opts = MarshalOptions{}
+	m.e.indent = ""
+	m.e.depth = 0
 	if cap(m.e.buf) <= 1<<20 {
 		marshalerPool.Put(m)
 	}
@@ -97,15 +147,36 @@ func (o MarshalOptions) Marshal(msg *hyperpb.Message) ([]byte, error) {
 }
 
 // MarshalAppend appends the protojson-compatible JSON serialization of msg to dst.
-func (o MarshalOptions) MarshalAppend(dst []byte, msg *hyperpb.Message) ([]byte, error) {
+func (o MarshalOptions) MarshalAppend(dst []byte, msg proto.Message) ([]byte, error) {
 	if msg == nil {
 		return nil, errors.New("hyperjson: message is nil")
+	}
+	pm := msg.ProtoReflect()
+	if !pm.IsValid() {
+		return nil, errors.New("hyperjson: message is nil")
+	}
+	if !o.AllowPartial {
+		if err := proto.CheckInitialized(msg); err != nil {
+			return nil, err
+		}
+	}
+	var err error
+	o, err = o.normalize()
+	if err != nil {
+		return nil, err
 	}
 	m := marshalerPool.Get().(*marshaler) //nolint:errcheck
 	m.opts = o
 	m.e.buf = m.e.buf[:0]
-	if err := m.msgValue(msg); err != nil {
+	m.e.indent = ""
+	m.e.depth = 0
+	if o.Multiline {
+		m.e.indent = o.Indent
+	}
+	if err := m.msgValue(pm); err != nil {
 		m.opts = MarshalOptions{}
+		m.e.indent = ""
+		m.e.depth = 0
 		if cap(m.e.buf) <= 1<<20 {
 			marshalerPool.Put(m)
 		}
@@ -113,10 +184,29 @@ func (o MarshalOptions) MarshalAppend(dst []byte, msg *hyperpb.Message) ([]byte,
 	}
 	dst = append(dst, m.e.buf...)
 	m.opts = MarshalOptions{}
+	m.e.indent = ""
+	m.e.depth = 0
 	if cap(m.e.buf) <= 1<<20 {
 		marshalerPool.Put(m)
 	}
 	return dst, nil
+}
+
+func (o MarshalOptions) normalize() (MarshalOptions, error) {
+	if o.Indent != "" {
+		for _, c := range o.Indent {
+			if c != ' ' && c != '\t' {
+				return o, fmt.Errorf("hyperjson: indent contains invalid character %q", c)
+			}
+		}
+		o.Multiline = true
+	} else if o.Multiline {
+		o.Indent = "  "
+	}
+	if o.EmitUnpopulated {
+		o.EmitDefaultValues = false
+	}
+	return o, nil
 }
 
 // unwrapMessage converts the public message wrapper to its internal
@@ -163,27 +253,72 @@ func (m *marshaler) overlayMessage(pm protoreflect.Message) error {
 	if isCustomWKT(md.FullName()) {
 		return m.wkt(pm, md)
 	}
-	m.e.rawByte('{')
-	if _, err := m.genericFields(pm, true); err != nil {
+	m.e.openObject()
+	first, err := m.genericFields(pm, true)
+	if err != nil {
 		return err
 	}
-	m.e.rawByte('}')
+	m.e.closeObject(first)
 	return nil
 }
 
-// genericFields writes fields for non-hyperpb messages, using only public
-// protoreflect operations.
+// genericFields writes fields using protoreflect operations.
 func (m *marshaler) genericFields(pm protoreflect.Message, first bool) (bool, error) {
 	fds := pm.Descriptor().Fields()
 	for i := range fds.Len() {
 		fd := fds.Get(i)
-		if !pm.Has(fd) {
+		if pm.Has(fd) {
+			first = m.e.memberKey(m.fieldName(fd), first)
+			if err := m.value(fd, pm.Get(fd)); err != nil {
+				return first, err
+			}
 			continue
 		}
-		first = m.e.comma(first)
-		m.e.objectKey(m.fieldName(fd))
-		if err := m.value(fd, pm.Get(fd)); err != nil {
-			return first, err
+
+		if fd.ContainingOneof() != nil || fd.IsExtension() {
+			continue // ignore unpopulated oneofs and extensions
+		}
+
+		switch {
+		case m.opts.EmitUnpopulated:
+			switch {
+			case fd.HasPresence():
+				first = m.e.memberKey(m.fieldName(fd), first)
+				m.e.null()
+			case fd.IsList():
+				first = m.e.memberKey(m.fieldName(fd), first)
+				m.e.openArray()
+				m.e.closeArray(true)
+			case fd.IsMap():
+				first = m.e.memberKey(m.fieldName(fd), first)
+				m.e.openObject()
+				m.e.closeObject(true)
+			default:
+				first = m.e.memberKey(m.fieldName(fd), first)
+				if err := m.value(fd, pm.Get(fd)); err != nil {
+					return first, err
+				}
+			}
+
+		case m.opts.EmitDefaultValues:
+			if fd.HasPresence() {
+				continue
+			}
+			switch {
+			case fd.IsList():
+				first = m.e.memberKey(m.fieldName(fd), first)
+				m.e.openArray()
+				m.e.closeArray(true)
+			case fd.IsMap():
+				first = m.e.memberKey(m.fieldName(fd), first)
+				m.e.openObject()
+				m.e.closeObject(true)
+			default:
+				first = m.e.memberKey(m.fieldName(fd), first)
+				if err := m.value(fd, pm.Get(fd)); err != nil {
+					return first, err
+				}
+			}
 		}
 	}
 	return first, nil
@@ -206,16 +341,15 @@ func (m *marshaler) value(fd protoreflect.FieldDescriptor, v protoreflect.Value)
 		return m.mapValue(fd, xprotoreflect.Map(v))
 	case fd.IsList():
 		list := xprotoreflect.List(v)
-		m.e.rawByte('[')
-		for i := range list.Len() {
-			if i > 0 {
-				m.e.rawByte(',')
-			}
+		n := list.Len()
+		m.e.openArray()
+		for i := range n {
+			m.e.arrayElem(i == 0)
 			if err := m.singular(fd, list.Get(i)); err != nil {
 				return err
 			}
 		}
-		m.e.rawByte(']')
+		m.e.closeArray(n == 0)
 		return nil
 	default:
 		return m.singular(fd, v)
@@ -224,6 +358,10 @@ func (m *marshaler) value(fd protoreflect.FieldDescriptor, v protoreflect.Value)
 
 // singular marshals a non-repeated value of the field's kind.
 func (m *marshaler) singular(fd protoreflect.FieldDescriptor, v protoreflect.Value) error {
+	if !v.IsValid() {
+		m.e.null()
+		return nil
+	}
 	switch fd.Kind() {
 	case protoreflect.BoolKind:
 		m.e.boolean(v.Bool())
@@ -259,9 +397,11 @@ func (m *marshaler) enum(fd protoreflect.FieldDescriptor, n protoreflect.EnumNum
 		m.e.raw("null")
 		return
 	}
-	if vd := ed.Values().ByNumber(n); vd != nil {
-		m.e.str(string(vd.Name()))
-		return
+	if !m.opts.UseEnumNumbers {
+		if vd := ed.Values().ByNumber(n); vd != nil {
+			m.e.str(string(vd.Name()))
+			return
+		}
 	}
 	m.e.int32(int32(n))
 }
@@ -296,20 +436,34 @@ func (m *marshaler) mapValue(fd protoreflect.FieldDescriptor, mp protoreflect.Ma
 		}
 	})
 
-	m.e.rawByte('{')
+	m.e.openObject()
 	valueFd := fd.MapValue()
 	for i, ent := range entries {
-		if i > 0 {
-			m.e.rawByte(',')
-		}
-		m.mapKey(keyKind, ent.k)
-		m.e.rawByte(':')
+		m.writeMapKey(keyKind, ent.k, i == 0)
 		if err := m.singular(valueFd, ent.v); err != nil {
 			return err
 		}
 	}
-	m.e.rawByte('}')
+	m.e.closeObject(len(entries) == 0)
 	return nil
+}
+
+func (m *marshaler) writeMapKey(kind protoreflect.Kind, k protoreflect.MapKey, first bool) {
+	if len(m.e.indent) == 0 {
+		if !first {
+			m.e.rawByte(',')
+		}
+		m.mapKey(kind, k)
+		m.e.rawByte(':')
+		return
+	}
+	if !first {
+		m.e.rawByte(',')
+	}
+	m.e.rawByte('\n')
+	m.e.writeIndent()
+	m.mapKey(kind, k)
+	m.e.raw(":  ")
 }
 
 // mapKey writes a map key as a JSON string.
@@ -368,17 +522,16 @@ func (m *marshaler) wkt(pm protoreflect.Message, md protoreflect.MessageDescript
 
 	case wktListValue:
 		list := pm.Get(fds.ByNumber(1)).List()
-		m.e.rawByte('[')
-		for i := range list.Len() {
-			if i > 0 {
-				m.e.rawByte(',')
-			}
+		n := list.Len()
+		m.e.openArray()
+		for i := range n {
+			m.e.arrayElem(i == 0)
 			inner := xprotoreflect.GetMessage[protoreflect.Message](list.Get(i))
 			if err := m.wkt(inner, inner.Descriptor()); err != nil {
 				return err
 			}
 		}
-		m.e.rawByte(']')
+		m.e.closeArray(n == 0)
 		return nil
 
 	case wktFieldMask:
@@ -408,18 +561,15 @@ func (m *marshaler) structValue(pm protoreflect.Message, fds protoreflect.FieldD
 	})
 	slices.SortFunc(entries, func(a, b entry) int { return strings.Compare(a.k, b.k) })
 
-	m.e.rawByte('{')
+	m.e.openObject()
 	for i, ent := range entries {
-		if i > 0 {
-			m.e.rawByte(',')
-		}
-		m.e.objectKey(ent.k)
+		m.e.memberKey(ent.k, i == 0)
 		inner := xprotoreflect.GetMessage[protoreflect.Message](ent.v)
 		if err := m.wkt(inner, inner.Descriptor()); err != nil {
 			return err
 		}
 	}
-	m.e.rawByte('}')
+	m.e.closeObject(len(entries) == 0)
 	return nil
 }
 
@@ -481,7 +631,8 @@ func (m *marshaler) anyValue(pm protoreflect.Message, fds protoreflect.FieldDesc
 	typeURL := pm.Get(fds.ByNumber(1)).String()
 	value := pm.Get(fds.ByNumber(2)).Bytes()
 	if typeURL == "" && len(value) == 0 {
-		m.e.raw("{}")
+		m.e.openObject()
+		m.e.closeObject(true)
 		return nil
 	}
 
@@ -491,25 +642,25 @@ func (m *marshaler) anyValue(pm protoreflect.Message, fds protoreflect.FieldDesc
 	}
 
 	innerMd := inner.Descriptor()
-	m.e.raw(`{"@type":`)
+	m.e.openObject()
+	m.e.memberKey("@type", true)
 	m.e.str(typeURL)
 	switch {
 	case innerMd.FullName() == wktEmpty:
 		// google.protobuf.Empty's JSON form is {}; protojson omits the
 		// "value" member entirely.
 	case isCustomWKT(innerMd.FullName()):
-		m.e.raw(`,"value":`)
+		m.e.memberKey("value", false)
 		if err := m.wkt(inner, innerMd); err != nil {
 			return err
 		}
 	default:
 		dm := unwrapMessage(inner)
-		p := mplanFor(dm.Type(), m.opts.UseProtoNames)
-		if _, err := m.planFields(dm, p, false); err != nil {
+		if _, err := m.genericFields(dm.ProtoReflect(), false); err != nil {
 			return err
 		}
 	}
-	m.e.rawByte('}')
+	m.e.closeObject(false)
 	return nil
 }
 

@@ -115,19 +115,6 @@ func BenchmarkUnmarshal(b *testing.B) {
 					_ = proto.Unmarshal(specimen, m)
 				}
 			})
-			b.Run("vtproto", func(b *testing.B) {
-				type vtMessage interface{ UnmarshalVTUnsafe([]byte) error }
-				if _, ok := test.Type.Gencode.New().Interface().(vtMessage); !ok {
-					b.SkipNow()
-				}
-
-				b.ReportAllocs()
-				b.SetBytes(int64(len(specimen)))
-				for range b.N {
-					m := test.Type.Gencode.New().Interface().(vtMessage) //nolint:errcheck
-					_ = m.UnmarshalVTUnsafe(specimen)
-				}
-			})
 			b.Run("dynamicpb", func(b *testing.B) {
 				b.ReportAllocs()
 				b.SetBytes(int64(len(specimen)))

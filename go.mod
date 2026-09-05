@@ -9,7 +9,6 @@ require (
 	buf.build/go/protovalidate v0.14.0
 	github.com/google/uuid v1.6.0
 	github.com/melbahja/goph v1.4.0
-	github.com/planetscale/vtprotobuf v0.6.0
 	github.com/protocolbuffers/protoscope v0.0.0-20221109213918-8e7a6aafa2c9
 	github.com/stretchr/testify v1.10.0
 	github.com/tiendc/go-deepcopy v1.6.1

@@ -23,7 +23,9 @@ import (
 
 // encoder appends protojson-formatted output into a pooled buffer.
 type encoder struct {
-	buf []byte
+	buf    []byte
+	indent string
+	depth  int
 }
 
 // bytes returns an owned copy of the encoded output.
@@ -36,6 +38,83 @@ func (e *encoder) bytes() []byte {
 func (e *encoder) raw(s string)   { e.buf = append(e.buf, s...) }
 func (e *encoder) rawByte(c byte) { e.buf = append(e.buf, c) }
 
+func (e *encoder) null() { e.raw("null") }
+
+func (e *encoder) writeIndent() {
+	for range e.depth {
+		e.raw(e.indent)
+	}
+}
+
+func (e *encoder) openObject() {
+	e.rawByte('{')
+	if len(e.indent) > 0 {
+		e.depth++
+	}
+}
+
+func (e *encoder) closeObject(empty bool) {
+	if len(e.indent) > 0 {
+		e.depth--
+		if !empty {
+			e.rawByte('\n')
+			e.writeIndent()
+		}
+	}
+	e.rawByte('}')
+}
+
+func (e *encoder) openArray() {
+	e.rawByte('[')
+	if len(e.indent) > 0 {
+		e.depth++
+	}
+}
+
+func (e *encoder) closeArray(empty bool) {
+	if len(e.indent) > 0 {
+		e.depth--
+		if !empty {
+			e.rawByte('\n')
+			e.writeIndent()
+		}
+	}
+	e.rawByte(']')
+}
+
+func (e *encoder) memberKey(name string, first bool) bool {
+	if len(e.indent) == 0 {
+		if !first {
+			e.rawByte(',')
+		}
+		e.str(name)
+		e.rawByte(':')
+		return false
+	}
+	if !first {
+		e.rawByte(',')
+	}
+	e.rawByte('\n')
+	e.writeIndent()
+	e.str(name)
+	e.raw(": ")
+	return false
+}
+
+func (e *encoder) arrayElem(first bool) {
+	if len(e.indent) == 0 {
+		if !first {
+			e.rawByte(',')
+		}
+		return
+	}
+	if !first {
+		e.rawByte(',')
+	}
+	e.rawByte('\n')
+	e.writeIndent()
+}
+
 // comma writes a separator if first is false, and returns false. Usage:
 //
 //	first = e.comma(first)
@@ -44,12 +123,6 @@ func (e *encoder) comma(first bool) bool {
 		e.rawByte(',')
 	}
 	return false
-}
-
-// objectKey writes a JSON object member key followed by a colon.
-func (e *encoder) objectKey(name string) {
-	e.str(name)
-	e.rawByte(':')
 }
 
 const hexDigits = "0123456789abcdef"

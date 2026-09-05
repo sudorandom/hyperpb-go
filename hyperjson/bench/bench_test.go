@@ -189,6 +189,10 @@ func BenchmarkMarshal(b *testing.B) {
 			_, err := hyperjson.Marshal(s.hm)
 			return err
 		})
+		run("json/hyperjson_gencode", func() error {
+			_, err := hyperjson.Marshal(s.oracle)
+			return err
+		})
 		run("json/protojson_hyperpb", func() error {
 			_, err := protojson.Marshal(s.hm)
 			return err
@@ -241,6 +245,15 @@ func BenchmarkUnmarshal(b *testing.B) {
 			for range b.N {
 				dm := dynamicpb.NewMessage(md)
 				if err := protojson.Unmarshal(s.canonical, dm); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		b.Run(tc.name+"/json/hyperjson_gencode", func(b *testing.B) {
+			b.ReportAllocs()
+			for range b.N {
+				m := proto.Clone(tc.msg)
+				if err := hyperjson.Unmarshal(s.canonical, m); err != nil {
 					b.Fatal(err)
 				}
 			}

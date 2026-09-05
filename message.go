@@ -72,11 +72,11 @@ func (m *Message) Unmarshal(data []byte, options ...UnmarshalOption) error {
 	}
 	opts := vm.NewOptions()
 	for _, opt := range options {
-		if opt.apply != nil {
+		if opt.applyVM != nil {
 			// Avoid having opt pointlessly escape to the heap.
 			// Users cannot create their own UnmarshalOptions, so violation
 			// of memory safety isn't a thing we need to worry about.
-			opt.apply(xunsafe.NoEscape(&opts))
+			opt.applyVM(xunsafe.NoEscape(&opts))
 		}
 	}
 	return vm.Run(&m.impl, data, opts)

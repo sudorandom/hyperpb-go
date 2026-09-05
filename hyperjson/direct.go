@@ -77,13 +77,14 @@ func (o UnmarshalOptions) directUnmarshal(p *dplan, data []byte, m *dynamic.Mess
 		w.shared = nil
 		w.arena = nil
 		w.buf = nil
-		w.fixups = w.fixups[:0]
 		w.seen = w.seen[:0]
-		if cap(w.fixups) > 1024 {
-			w.fixups = nil
-		}
 		if cap(w.seen) > 256 {
 			w.seen = nil
+		}
+
+		w.fixups = w.fixups[:0]
+		if cap(w.fixups) > 1024 {
+			w.fixups = nil
 		}
 		writerPool.Put(w)
 	}()
@@ -126,7 +127,7 @@ func (o UnmarshalOptions) directUnmarshal(p *dplan, data []byte, m *dynamic.Mess
 	if err != nil {
 		return err
 	}
-	if p.required {
+	if !o.AllowPartial && p.required {
 		return checkInit()
 	}
 	return nil
