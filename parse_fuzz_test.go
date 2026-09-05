@@ -22,8 +22,6 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/sudorandom/fauxrpc"
-
 	"buf.build/go/hyperpb"
 	testpb "buf.build/go/hyperpb/internal/gen/test"
 	mk48pb "buf.build/go/hyperpb/internal/gen/rsb/mk48"
@@ -58,16 +56,6 @@ func fuzz[M proto.Message](f *testing.F) {
 	test := new(testdata.TestCase)
 	test.Type.Gencode = z.ProtoReflect().Type()
 	test.Type.Fast = hyperpb.CompileMessageDescriptor(test.Type.Gencode.Descriptor())
-
-	f.Log("Generating seeds...")
-	for i := 0; i < 20; i++ {
-		m := test.Type.Gencode.New().Interface()
-		if err := fauxrpc.SetDataOnMessage(m, fauxrpc.GenOptions{}); err == nil {
-			b, _ := proto.Marshal(m)
-			f.Add(b)
-		}
-	}
-	f.Log("Generated seeds")
 
 	f.Fuzz(func(t *testing.T, b []byte) {
 		ctx := contexts.Get()
