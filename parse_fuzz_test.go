@@ -22,8 +22,14 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/sudorandom/fauxrpc"
+
 	"buf.build/go/hyperpb"
 	testpb "buf.build/go/hyperpb/internal/gen/test"
+	mk48pb "buf.build/go/hyperpb/internal/gen/rsb/mk48"
+	meshpb "buf.build/go/hyperpb/internal/gen/rsb/mesh"
+	minecraftpb "buf.build/go/hyperpb/internal/gen/rsb/minecraft"
+	logpb "buf.build/go/hyperpb/internal/gen/rsb/log"
 	"buf.build/go/hyperpb/internal/testdata"
 	"buf.build/go/hyperpb/internal/xsync"
 )
@@ -38,6 +44,13 @@ func FuzzDescriptor(f *testing.F) { fuzz[*descriptorpb.FileDescriptorProto](f) }
 func FuzzStruct(f *testing.F)     { fuzz[*structpb.Value](f) }
 func FuzzEmpty(f *testing.F)      { fuzz[*emptypb.Empty](f) }
 
+func FuzzPathological(f *testing.F) { fuzz[*testpb.Pathological](f) }
+func FuzzMk48(f *testing.F) { fuzz[*mk48pb.Updates](f) }
+func FuzzMesh(f *testing.F) { fuzz[*meshpb.Mesh](f) }
+func FuzzMinecraft(f *testing.F) { fuzz[*minecraftpb.Players](f) }
+func FuzzLog(f *testing.F) { fuzz[*logpb.Logs](f) }
+func FuzzFileDescriptorSet(f *testing.F) { fuzz[*descriptorpb.FileDescriptorSet](f) }
+
 func fuzz[M proto.Message](f *testing.F) {
 	f.Helper()
 
@@ -45,6 +58,16 @@ func fuzz[M proto.Message](f *testing.F) {
 	test := new(testdata.TestCase)
 	test.Type.Gencode = z.ProtoReflect().Type()
 	test.Type.Fast = hyperpb.CompileMessageDescriptor(test.Type.Gencode.Descriptor())
+
+	f.Log("Generating seeds...")
+	for i := 0; i < 20; i++ {
+		m := test.Type.Gencode.New().Interface()
+		if err := fauxrpc.SetDataOnMessage(m, fauxrpc.GenOptions{}); err == nil {
+			b, _ := proto.Marshal(m)
+			f.Add(b)
+		}
+	}
+	f.Log("Generated seeds")
 
 	f.Fuzz(func(t *testing.T, b []byte) {
 		ctx := contexts.Get()

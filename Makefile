@@ -41,8 +41,8 @@ GOARCH ?=
 GOAMD64 ?=
 GOARM64 ?=
 
-HOST_ENV ?= GOTOOLCHAIN=local
-EXEC_ENV ?= GOOS=$(GOOS) GOARCH=$(GOARCH) GOAMD64=$(GOAMD64) GOARM64=$(GOARM64) GOTOOLCHAIN=local
+HOST_ENV ?=
+EXEC_ENV ?= GOOS=$(GOOS) GOARCH=$(GOARCH) GOAMD64=$(GOAMD64) GOARM64=$(GOARM64)
 
 # Go will carelessly pick these up on host-side builds if we don't unexport them.
 unexport GOOS
