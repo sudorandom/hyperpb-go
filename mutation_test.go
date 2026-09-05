@@ -525,3 +525,33 @@ func BenchmarkMarshal(b *testing.B) {
 		}
 	})
 }
+
+func TestCOWListTruncate(t *testing.T) {
+	t.Parallel()
+	mt, err := protoregistry.GlobalTypes.FindMessageByName("hyperpb.test.Graph")
+	if err != nil {
+		t.Fatalf("failed to find hyperpb.test.Graph: %v", err)
+	}
+	fastType := hyperpb.CompileMessageDescriptor(mt.Descriptor())
+	msg := hyperpb.NewMessage(fastType)
+	fdR := mt.Descriptor().Fields().ByName("r")
+	rList := msg.Mutable(fdR).List()
+	for i := range 5 {
+		sub := rList.AppendMutable().Message().Interface().(*hyperpb.Message) //nolint:errcheck
+		sub.Set(mt.Descriptor().Fields().ByName("v"), protoreflect.ValueOfInt32(int32(i)))
+	}
+	if rList.Len() != 5 {
+		t.Fatalf("expected len 5, got %d", rList.Len())
+	}
+	rList.Truncate(2)
+	if rList.Len() != 2 {
+		t.Fatalf("expected len 2 after truncate, got %d", rList.Len())
+	}
+	// Verify remaining elements
+	if rList.Get(0).Message().Get(mt.Descriptor().Fields().ByName("v")).Int() != 0 {
+		t.Errorf("expected elem 0 value 0")
+	}
+	if rList.Get(1).Message().Get(mt.Descriptor().Fields().ByName("v")).Int() != 1 {
+		t.Errorf("expected elem 1 value 1")
+	}
+}

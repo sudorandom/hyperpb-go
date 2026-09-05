@@ -106,7 +106,6 @@ func isNullEnum(fd protoreflect.FieldDescriptor) (nullEnum bool, allowsNull bool
 
 // ufield is one field of a compiled unmarshal plan.
 type ufield struct {
-
 	class uint8
 	wkt   uint8 // for ucMessage/ucGroup: the submessage's WKT code
 
@@ -234,7 +233,7 @@ func classifyU(fd protoreflect.FieldDescriptor, built map[protoreflect.MessageDe
 	switch {
 	case fd.IsMap():
 		uf.isMap = true
-		uf.tag = uint64(protowire.EncodeTag(uf.num, protowire.BytesType))
+		uf.tag = protowire.EncodeTag(uf.num, protowire.BytesType)
 		uf.key = classifyU(fd.MapKey(), built)
 		uf.val = classifyU(fd.MapValue(), built)
 		return uf
@@ -256,7 +255,6 @@ func classifyU(fd protoreflect.FieldDescriptor, built map[protoreflect.MessageDe
 		uf.wkt = uf.sub.wkt
 		uf.allowsNull = uf.wkt == wkValue && !uf.isList
 	}
-	uf.tag = uint64(protowire.EncodeTag(uf.num, wire))
+	uf.tag = protowire.EncodeTag(uf.num, wire)
 	return uf
 }
-

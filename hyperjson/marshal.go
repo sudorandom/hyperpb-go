@@ -15,8 +15,12 @@
 package hyperjson
 
 import (
+	"errors"
 	"fmt"
+	"math"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -28,9 +32,20 @@ import (
 )
 
 // Resolver resolves google.protobuf.Any type URLs.
-
 type Resolver interface {
 	FindMessageByURL(url string) (protoreflect.MessageType, error)
+}
+
+// ExtensionResolver resolves extension field names.
+type ExtensionResolver interface {
+	FindExtensionByName(field protoreflect.FullName) (protoreflect.ExtensionType, error)
+}
+
+func findExtension(r Resolver, name protoreflect.FullName) (protoreflect.ExtensionType, error) {
+	if er, ok := r.(ExtensionResolver); ok {
+		return er.FindExtensionByName(name)
+	}
+	return protoregistry.GlobalTypes.FindExtensionByName(name)
 }
 
 // MarshalOptions configures Marshal.
@@ -60,16 +75,21 @@ func MarshalAppend(dst []byte, msg *hyperpb.Message) ([]byte, error) {
 
 // Marshal serializes a hyperpb message to protojson-compatible JSON.
 func (o MarshalOptions) Marshal(msg *hyperpb.Message) ([]byte, error) {
-	m := marshalerPool.Get().(*marshaler)
+	if msg == nil {
+		return nil, errors.New("hyperjson: message is nil")
+	}
+	m := marshalerPool.Get().(*marshaler) //nolint:errcheck
 	m.opts = o
 	m.e.buf = m.e.buf[:0]
 	if err := m.msgValue(msg); err != nil {
+		m.opts = MarshalOptions{}
 		if cap(m.e.buf) <= 1<<20 {
 			marshalerPool.Put(m)
 		}
 		return nil, err
 	}
 	out := m.e.bytes()
+	m.opts = MarshalOptions{}
 	if cap(m.e.buf) <= 1<<20 {
 		marshalerPool.Put(m)
 	}
@@ -78,16 +98,21 @@ func (o MarshalOptions) Marshal(msg *hyperpb.Message) ([]byte, error) {
 
 // MarshalAppend appends the protojson-compatible JSON serialization of msg to dst.
 func (o MarshalOptions) MarshalAppend(dst []byte, msg *hyperpb.Message) ([]byte, error) {
-	m := marshalerPool.Get().(*marshaler)
+	if msg == nil {
+		return nil, errors.New("hyperjson: message is nil")
+	}
+	m := marshalerPool.Get().(*marshaler) //nolint:errcheck
 	m.opts = o
 	m.e.buf = m.e.buf[:0]
 	if err := m.msgValue(msg); err != nil {
+		m.opts = MarshalOptions{}
 		if cap(m.e.buf) <= 1<<20 {
 			marshalerPool.Put(m)
 		}
 		return nil, err
 	}
 	dst = append(dst, m.e.buf...)
+	m.opts = MarshalOptions{}
 	if cap(m.e.buf) <= 1<<20 {
 		marshalerPool.Put(m)
 	}
@@ -158,7 +183,6 @@ func (m *marshaler) genericFields(pm protoreflect.Message, first bool) (bool, er
 }
 
 func (m *marshaler) fieldName(fd protoreflect.FieldDescriptor) string {
-
 	if fd.IsExtension() {
 		return "[" + string(fd.FullName()) + "]"
 	}
@@ -366,22 +390,24 @@ func (m *marshaler) structValue(pm protoreflect.Message, fds protoreflect.FieldD
 	fd := fds.ByNumber(1)
 	mp := pm.Get(fd).Map()
 
-	keys := make([]string, 0, mp.Len())
-	vals := make(map[string]protoreflect.Value, mp.Len())
+	type entry struct {
+		k string
+		v protoreflect.Value
+	}
+	entries := make([]entry, 0, mp.Len())
 	mp.Range(func(k protoreflect.MapKey, v protoreflect.Value) bool {
-		keys = append(keys, k.String())
-		vals[k.String()] = v
+		entries = append(entries, entry{k.String(), v})
 		return true
 	})
-	sort.Strings(keys)
+	slices.SortFunc(entries, func(a, b entry) int { return strings.Compare(a.k, b.k) })
 
 	m.e.rawByte('{')
-	for i, k := range keys {
+	for i, ent := range entries {
 		if i > 0 {
 			m.e.rawByte(',')
 		}
-		m.e.objectKey(k)
-		inner := xprotoreflect.GetMessage[protoreflect.Message](vals[k])
+		m.e.objectKey(ent.k)
+		inner := xprotoreflect.GetMessage[protoreflect.Message](ent.v)
 		if err := m.wkt(inner, inner.Descriptor()); err != nil {
 			return err
 		}
@@ -401,8 +427,8 @@ func (m *marshaler) valueValue(pm protoreflect.Message, fds protoreflect.FieldDe
 		case 2: // number_value
 			f := v.Float()
 			// protojson rejects non-finite number_value.
-			if f != f || f > 1.7976931348623157e308 || f < -1.7976931348623157e308 {
-				err = fmt.Errorf("hyperjson: google.protobuf.Value number_value is not finite")
+			if math.IsNaN(f) || math.IsInf(f, 0) {
+				err = errors.New("hyperjson: google.protobuf.Value number_value is not finite")
 				return false
 			}
 			m.e.float(f, 64)
@@ -421,7 +447,7 @@ func (m *marshaler) valueValue(pm protoreflect.Message, fds protoreflect.FieldDe
 	}
 	if !found {
 		// An unpopulated Value has no default JSON representation.
-		return fmt.Errorf("hyperjson: google.protobuf.Value has no value set")
+		return errors.New("hyperjson: google.protobuf.Value has no value set")
 	}
 	return nil
 }
@@ -480,7 +506,6 @@ func (m *marshaler) anyValue(pm protoreflect.Message, fds protoreflect.FieldDesc
 	return nil
 }
 
-
 // typeCache caches hyperpb compilations of Any payload types.
 var typeCache sync.Map // protoreflect.MessageDescriptor -> *hyperpb.MessageType
 
@@ -489,8 +514,8 @@ func compiledType(md protoreflect.MessageDescriptor) *hyperpb.MessageType {
 		return t.(*hyperpb.MessageType) //nolint:errcheck
 	}
 	t := hyperpb.CompileMessageDescriptor(md)
-	typeCache.Store(md, t)
-	return t
+	actual, _ := typeCache.LoadOrStore(md, t)
+	return actual.(*hyperpb.MessageType) //nolint:errcheck
 }
 
 // parseAny resolves an Any type URL and parses its payload with hyperpb.

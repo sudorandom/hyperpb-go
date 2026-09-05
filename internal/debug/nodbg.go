@@ -22,7 +22,6 @@ func Log([]any, string, string, ...any) {}
 func Assert(bool, string, ...any)       {}
 func WithTesting(any) func()            { return func() {} }
 
-
 type Value[T any] struct {
 	_ struct{}
 }

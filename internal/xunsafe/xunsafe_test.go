@@ -72,4 +72,3 @@ func AssertInlinedAny[T any](t testing.TB) {
 	var z T
 	assert.True(t, xunsafe.IsDirect[T](), "expected %T to be pointer-shaped", z)
 }
-

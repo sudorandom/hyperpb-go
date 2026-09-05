@@ -35,9 +35,8 @@
 package main
 
 import (
-	"errors"
-
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -47,14 +46,11 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
+	_ "google.golang.org/protobuf/types/known/emptypb"
 
 	"buf.build/go/hyperpb"
 	"buf.build/go/hyperpb/hyperjson"
 	conformance "buf.build/go/hyperpb/internal/gen/conformance"
-
-	// The suite's Any tests reference google.protobuf.Empty by type URL; link
-	// it so the registry can resolve it.
-	_ "google.golang.org/protobuf/types/known/emptypb"
 )
 
 func main() {
@@ -100,9 +96,7 @@ func fatalf(format string, args ...any) {
 	os.Exit(1)
 }
 
-var (
-	typeCache sync.Map // protoreflect.FullName -> *hyperpb.MessageType
-)
+var typeCache sync.Map // protoreflect.FullName -> *hyperpb.MessageType
 
 // compiledType resolves a conformance message type name to a compiled
 // hyperpb type. Only the proto2/proto3 test messages linked into this binary

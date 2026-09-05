@@ -185,7 +185,7 @@ func buildDPlan(ty *tdp.Type, built map[*tdp.Type]*dplan) *dplan {
 func classifyD(df *dfield, fd protoreflect.FieldDescriptor, f *tdp.Field, built map[*tdp.Type]*dplan) {
 	df.fd = fd
 	df.number = uint32(fd.Number())
-	df.offset = f.Accessor.Offset
+	df.offset = f.Offset
 
 	switch {
 	case fd.IsMap():
@@ -243,7 +243,6 @@ func classifyDScalar(df *dfield, fd protoreflect.FieldDescriptor, f *tdp.Field, 
 		}
 	}
 }
-
 
 // supportedD reports whether the direct writer handles this field shape.
 func supportedD(df *dfield) bool {

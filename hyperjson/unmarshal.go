@@ -16,6 +16,7 @@ package hyperjson
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -28,6 +29,12 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"buf.build/go/hyperpb"
+)
+
+const (
+	typeURLField = "@type"
+	strTrue      = "true"
+	strFalse     = "false"
 )
 
 // UnmarshalOptions configures Unmarshal.
@@ -54,6 +61,9 @@ func Unmarshal(data []byte, msg *hyperpb.Message) error {
 
 // Unmarshal parses protojson-encoded data into msg.
 func (o UnmarshalOptions) Unmarshal(data []byte, msg *hyperpb.Message) error {
+	if msg == nil {
+		return errors.New("hyperjson: message is nil")
+	}
 	dm := msg.Unwrap()
 	if dm.Shared != nil && dm.Shared.Overlays != nil {
 		delete(dm.Shared.Overlays, dm)
@@ -223,13 +233,13 @@ func (t *transcoder) message(p *uplan, out []byte, skipType bool) ([]byte, error
 				return nil, err
 			}
 
-		case skipType && string(key) == "@type":
+		case skipType && string(key) == typeURLField:
 			if err := t.d.skipValue(); err != nil {
 				return nil, err
 			}
 
 		case len(key) > 2 && key[0] == '[' && key[len(key)-1] == ']':
-			xt, err := protoregistry.GlobalTypes.FindExtensionByName(protoreflect.FullName(key[1 : len(key)-1]))
+			xt, err := findExtension(t.opts.Resolver, protoreflect.FullName(key[1:len(key)-1]))
 			if err != nil || xt.TypeDescriptor().ContainingMessage() != p.md {
 				if t.opts.DiscardUnknown {
 					if err := t.d.skipValue(); err != nil {
@@ -363,9 +373,9 @@ func (t *transcoder) mapKey(uf *ufield, key []byte, out []byte) ([]byte, error) 
 	case ucBool:
 		var v uint64
 		switch string(key) {
-		case "true":
+		case strTrue:
 			v = 1
-		case "false":
+		case strFalse:
 		default:
 			return nil, t.d.errf("invalid map key %q for bool", key)
 		}
@@ -400,12 +410,12 @@ func (t *transcoder) singular(uf *ufield, out []byte) ([]byte, error) {
 		var v uint64
 		switch c {
 		case 't':
-			if err := t.d.consumeLiteral("true"); err != nil {
+			if err := t.d.consumeLiteral(strTrue); err != nil {
 				return nil, err
 			}
 			v = 1
 		case 'f':
-			if err := t.d.consumeLiteral("false"); err != nil {
+			if err := t.d.consumeLiteral(strFalse); err != nil {
 				return nil, err
 			}
 		default:
@@ -480,7 +490,7 @@ func (t *transcoder) singular(uf *ufield, out []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = protowire.AppendVarint(out, uint64(protowire.EncodeTag(uf.num, protowire.EndGroupType)))
+		out = protowire.AppendVarint(out, protowire.EncodeTag(uf.num, protowire.EndGroupType))
 		return out, nil
 	}
 }
@@ -759,7 +769,7 @@ func (t *transcoder) wktContent(p *uplan, out []byte) ([]byte, error) {
 		if len(s) == 0 {
 			return out, nil
 		}
-		for _, path := range strings.Split(string(s), ",") {
+		for path := range strings.SplitSeq(string(s), ",") {
 			snake, ok := fieldMaskPathToSnake(path)
 			if !ok {
 				return nil, t.d.errf("invalid google.protobuf.FieldMask path %q", path)
@@ -834,9 +844,9 @@ func (t *transcoder) valueContent(out []byte) ([]byte, error) {
 		out = protowire.AppendTag(out, 1, protowire.VarintType)
 		out = protowire.AppendVarint(out, 0)
 	case 't', 'f':
-		lit, v := "true", uint64(1)
+		lit, v := strTrue, uint64(1)
 		if c == 'f' {
-			lit, v = "false", 0
+			lit, v = strFalse, 0
 		}
 		if err := t.d.consumeLiteral(lit); err != nil {
 			return nil, err
@@ -938,7 +948,7 @@ func transcodeAnyPayload(d *decoder, opts UnmarshalOptions) ([]byte, []byte, err
 	save := *d
 	var typeURL []byte
 	err := d.walkObject(func(key []byte) error {
-		if string(key) == "@type" {
+		if string(key) == typeURLField {
 			if typeURL != nil {
 				return d.errf("duplicate @type in google.protobuf.Any")
 			}
@@ -984,9 +994,9 @@ func transcodeAnyPayload(d *decoder, opts UnmarshalOptions) ([]byte, []byte, err
 	if inner.wkt != wkNone {
 		// Shape: {"@type": ..., "value": <custom JSON>}.
 		var sawValue bool
-		err := tc.d.walkObject(func(key []byte) error {
+		err = tc.d.walkObject(func(key []byte) error {
 			switch string(key) {
-			case "@type":
+			case typeURLField:
 				return tc.d.skipValue()
 			case "value":
 				if sawValue {

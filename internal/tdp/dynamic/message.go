@@ -109,8 +109,8 @@ func (m *Message) Range(yield func(protoreflect.FieldDescriptor, protoreflect.Va
 		if ov.Cleared[fd.Number()] {
 			continue
 		}
+		seen.add(fd.Number())
 		if m.Has(fd) {
-			seen.add(fd.Number())
 			if !yield(fd, val.val) {
 				return
 			}
@@ -218,7 +218,7 @@ func (m *Message) HasNoAlloc(fd protoreflect.FieldDescriptor, f *tdp.Field) bool
 		return p != nil && *p != 0
 	case protoreflect.StringKind, protoreflect.BytesKind:
 		p := GetField[zc.Range](m, f.Offset)
-		return p != nil && (*p).Len() > 0
+		return p != nil && p.Len() > 0
 	default:
 		return false
 	}
@@ -245,6 +245,9 @@ func (m *Message) Has(fd protoreflect.FieldDescriptor) bool {
 				if fd.Message() != nil {
 					_, empty := val.val.Interface().(empty.Message)
 					return !empty
+				}
+				if !fd.HasPresence() {
+					return !isZeroValue(fd, val.val)
 				}
 				return true
 			}
@@ -603,13 +606,6 @@ func (m *Message) Clear(fd protoreflect.FieldDescriptor) {
 	ov.Cleared[fd.Number()] = true
 }
 
-func (m *Message) subType(fd protoreflect.FieldDescriptor) *tdp.Type {
-	if f := m.Type().ByDescriptor(fd); f.IsValid() {
-		return f.Message
-	}
-	return nil
-}
-
 func (m *Message) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	if m.Shared == nil {
 		panic("cannot mutate invalid/nil message")
@@ -686,6 +682,13 @@ func (m *Message) SetUnknown(raw protoreflect.RawFields) {
 	m.lazyInitOverlay()
 	ov := m.Shared.Overlays[m]
 	ov.Unknown = raw
+}
+
+func (m *Message) subType(fd protoreflect.FieldDescriptor) *tdp.Type {
+	if f := m.Type().ByDescriptor(fd); f.IsValid() {
+		return f.Message
+	}
+	return nil
 }
 
 func (m *Message) lazyInitOverlay() {

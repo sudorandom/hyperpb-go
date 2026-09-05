@@ -36,7 +36,6 @@ import (
 
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"buf.build/go/hyperpb/internal/arena"
 	"buf.build/go/hyperpb/internal/arena/slice"
@@ -150,17 +149,14 @@ func (w *writer) grow(need int) {
 	w.buf = nb
 }
 
-// rangeOf converts a readString result into a range: aliased slices share
-// offsets with the buffer's input prefix; unescaped copies go to the
-// appendix.
-func (w *writer) rangeOf(s []byte) zc.Range {
+// rangeFromString converts string bytes into a range: unescaped slices share
+// offsets with the buffer's input prefix; escaped copies go to the appendix.
+func (w *writer) rangeFromString(s []byte, start int, escaped bool) zc.Range {
 	if len(s) == 0 {
 		return zc.NewRaw(0, 0)
 	}
-	data := w.d.data
-	off := uintptr(unsafe.Pointer(&s[0])) - uintptr(unsafe.Pointer(&data[0]))
-	if off < uintptr(len(data)) {
-		return zc.NewRaw(int(off), len(s))
+	if !escaped {
+		return zc.NewRaw(start, len(s))
 	}
 	return w.append(s)
 }
@@ -549,12 +545,12 @@ func (w *writer) readFloat(df *dfield, bits int) (float64, error) {
 // readStringOrBytes consumes a string value; bytes are base64-decoded into
 // the appendix.
 func (w *writer) readStringOrBytes(df *dfield) (zc.Range, error) {
-	s, err := w.d.readString()
+	s, start, escaped, err := w.d.readStringView()
 	if err != nil {
 		return 0, err
 	}
 	if df.class == ucString {
-		return w.rangeOf(s), nil
+		return w.rangeFromString(s, start, escaped), nil
 	}
 	enc := base64Encoding(s)
 	dst := w.reserve(enc.DecodedLen(len(s)))
@@ -869,7 +865,7 @@ func (w *writer) mapField(df *dfield, m *dynamic.Message) error {
 
 	slot := fieldPtr(m, df.offset)
 	for {
-		key, err := w.d.readString()
+		key, start, escaped, err := w.d.readStringView()
 		if err != nil {
 			return err
 		}
@@ -881,7 +877,7 @@ func (w *writer) mapField(df *dfield, m *dynamic.Message) error {
 			return err
 		}
 		if !v.skip {
-			if err := w.insertByKey(df, slot, key, v); err != nil {
+			if err := w.insertByKey(df, slot, key, start, escaped, v); err != nil {
 				return err
 			}
 		}
@@ -893,10 +889,10 @@ func (w *writer) mapField(df *dfield, m *dynamic.Message) error {
 }
 
 // insertByKey parses the key text by key class and dispatches insertion.
-func (w *writer) insertByKey(df *dfield, slot unsafe.Pointer, key []byte, v mapValue) error {
+func (w *writer) insertByKey(df *dfield, slot unsafe.Pointer, key []byte, start int, escaped bool, v mapValue) error {
 	switch df.key.class {
 	case ucString:
-		r := w.rangeOf(key)
+		r := w.rangeFromString(key, start, escaped)
 		ef := zc.ExtractFrom{Src: &w.buf[0]}
 		extract := func(k zc.Range) []byte { return ef.Bytes(uint64(k)) }
 		insertMapEntry(w, df, slot, r, extract, v)
@@ -947,7 +943,7 @@ func (w *writer) insertByKey(df *dfield, slot unsafe.Pointer, key []byte, v mapV
 // field directly; unresolvable or uncompiled extensions are transcoded to
 // wire and preserved as unknown fields, matching the transcode path.
 func (w *writer) extension(p *dplan, m *dynamic.Message, key []byte, extSeen map[protowire.Number]bool) (map[protowire.Number]bool, error) {
-	xt, err := protoregistry.GlobalTypes.FindExtensionByName(protoreflect.FullName(key[1 : len(key)-1]))
+	xt, err := findExtension(w.opts.Resolver, protoreflect.FullName(key[1:len(key)-1]))
 	if err != nil || xt.TypeDescriptor().ContainingMessage() != p.md {
 		if w.opts.DiscardUnknown {
 			return extSeen, w.d.skipValue()

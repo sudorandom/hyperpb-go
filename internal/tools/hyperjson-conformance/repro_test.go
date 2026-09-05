@@ -17,6 +17,7 @@ func compile(m proto.Message) *hyperpb.MessageType {
 }
 
 func TestAnyEmptyJSON(t *testing.T) {
+	t.Parallel()
 	ct := compile(&conformance.TestAllTypesProto3{})
 	hm := hyperpb.NewMessage(ct)
 	err := hyperjson.Unmarshal([]byte(`{"optionalAny":{}}`), hm)
@@ -28,6 +29,7 @@ func TestAnyEmptyJSON(t *testing.T) {
 }
 
 func TestOneofNullFirst(t *testing.T) {
+	t.Parallel()
 	ct := compile(&conformance.TestAllTypesProto3{})
 	hm := hyperpb.NewMessage(ct)
 	err := hyperjson.Unmarshal([]byte(`{"oneofUint32": null, "oneofString": "test"}`), hm)
@@ -37,6 +39,7 @@ func TestOneofNullFirst(t *testing.T) {
 }
 
 func TestInt64TooLarge(t *testing.T) {
+	t.Parallel()
 	ct := compile(&conformance.TestAllTypesProto3{})
 	for _, in := range []string{
 		`{"optionalInt64": 9223372036854775808}`,
@@ -52,6 +55,7 @@ func TestInt64TooLarge(t *testing.T) {
 
 // Repeated bool where true is encoded as an overlong/large varint.
 func TestRepeatedBoolLargeVarint(t *testing.T) {
+	t.Parallel()
 	md := (&conformance.TestAllTypesProto3{}).ProtoReflect().Descriptor()
 	fd := md.Fields().ByName("repeated_bool")
 
@@ -75,7 +79,7 @@ func TestRepeatedBoolLargeVarint(t *testing.T) {
 		t.Fatal(err)
 	}
 	list := hm.Get(fd).List()
-	var got []bool
+	got := make([]bool, 0, list.Len())
 	for i := range list.Len() {
 		got = append(got, list.Get(i).Bool())
 	}
@@ -91,6 +95,7 @@ func TestRepeatedBoolLargeVarint(t *testing.T) {
 
 // A single map entry whose submessage contains the key field twice.
 func TestDuplicateKeyInMapEntry(t *testing.T) {
+	t.Parallel()
 	md := (&conformance.TestAllTypesProto3{}).ProtoReflect().Descriptor()
 	fd := md.Fields().ByName("map_string_nested_message")
 
@@ -124,6 +129,7 @@ func TestDuplicateKeyInMapEntry(t *testing.T) {
 // Extensions round-trip through the "[full.name]" JSON convention when the
 // type is compiled with extension support.
 func TestExtensionRoundTrip(t *testing.T) {
+	t.Parallel()
 	jsonIn := `{"[protobuf_test_messages.proto2.extension_int32]": 42, "optionalInt32": 1}`
 
 	ref := &conformance.TestAllTypesProto2{}

@@ -33,10 +33,10 @@ type Field struct {
 	Accessor
 }
 
-// IsValid returns whether or not this is the sentinel invalid field in a [Type]'s
-// field table.
+// IsValid returns whether or not this is a valid field (non-nil and non-sentinel)
+// in a [Type]'s field table.
 func (f *Field) IsValid() bool {
-	return f.Getter != nil
+	return f != nil && f.Getter != nil
 }
 
 // Get gets the value of this field out of a message of appropriate type.

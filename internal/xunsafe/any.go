@@ -21,7 +21,6 @@ import (
 	"buf.build/go/hyperpb/internal/xsync"
 )
 
-
 var isDirectMap xsync.Map[reflect.Type, bool]
 
 // iface is the internal representation an a Go interface value.
@@ -114,4 +113,3 @@ func IsDirect[T any]() bool {
 	// stack pointer of some kind.
 	return p == nil
 }
-

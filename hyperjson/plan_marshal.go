@@ -119,8 +119,8 @@ func mplanFor(ty *tdp.Type, protoNames bool) *mplan {
 		return p.(*mplan) //nolint:errcheck
 	}
 	p := compileMPlan(ty, protoNames)
-	mplans[idx].Store(ty, p)
-	return p
+	actual, _ := mplans[idx].LoadOrStore(ty, p)
+	return actual.(*mplan) //nolint:errcheck
 }
 
 func compileMPlan(ty *tdp.Type, protoNames bool) *mplan {
@@ -133,7 +133,7 @@ func compileMPlan(ty *tdp.Type, protoNames bool) *mplan {
 	p := &mplan{fields: make([]mfield, len(fds))}
 	for i, fd := range fds {
 		pf := &p.fields[i]
-		pf.offset = ty.ByIndex(i).Accessor.Offset
+		pf.offset = ty.ByIndex(i).Offset
 
 		var name string
 		switch {
@@ -505,5 +505,7 @@ type intEntry struct {
 	v protoreflect.Value
 }
 
-var strEntryPool = sync.Pool{New: func() any { b := make([]strEntry, 0, 16); return &b }}
-var intEntryPool = sync.Pool{New: func() any { b := make([]intEntry, 0, 16); return &b }}
+var (
+	strEntryPool = sync.Pool{New: func() any { b := make([]strEntry, 0, 16); return &b }}
+	intEntryPool = sync.Pool{New: func() any { b := make([]intEntry, 0, 16); return &b }}
+)

@@ -87,9 +87,8 @@ var fuzzSeeds = []string{
 
 func fuzzSeed(f *testing.F) {
 	f.Helper()
-	for i, s := range fuzzSeeds {
-		for sel := range len(fuzzMessages) {
-			_ = i
+	for _, s := range fuzzSeeds {
+		for sel := range fuzzMessages {
 			f.Add(byte(sel), []byte(s))
 		}
 	}
@@ -164,7 +163,7 @@ func FuzzOracle(f *testing.F) {
 // hyperjson.Marshal against protojson.Marshal semantically (both reparsed
 // with protojson, which drops unknown fields consistently).
 func FuzzWireRoundTrip(f *testing.F) {
-	for sel := range len(fuzzMessages) {
+	for sel := range fuzzMessages {
 		f.Add(byte(sel), []byte{})
 		f.Add(byte(sel), []byte{0x08, 0x01})
 		f.Add(byte(sel), []byte{0x72, 0x03, 'a', 'b', 'c'})

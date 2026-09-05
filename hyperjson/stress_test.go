@@ -40,6 +40,7 @@ import (
 // Every failure report includes the PRNG seed; rerun with HYPERJSON_SEED to
 // reproduce.
 func TestStressDifferential(t *testing.T) {
+	t.Parallel()
 	durStr := os.Getenv("HYPERJSON_STRESS")
 	if durStr == "" {
 		durStr = "2s" // Smoke-test duration for normal test runs.
@@ -85,8 +86,10 @@ func mutateDoc(rng *rand.Rand, seed string) []byte {
 		case 1: // Flip a byte.
 			doc[rng.IntN(len(doc))] = byte(rng.IntN(256))
 		case 2: // Insert a structural token.
-			toks := []string{"{", "}", "[", "]", ",", ":", `"`, "null", "-", "0", "1e999",
-				`"A"`, `"\ud800"`, " ", `"NaN"`, "9223372036854775808", "true"}
+			toks := []string{
+				"{", "}", "[", "]", ",", ":", `"`, "null", "-", "0", "1e999",
+				`"A"`, `"\ud800"`, " ", `"NaN"`, "9223372036854775808", "true",
+			}
 			tok := toks[rng.IntN(len(toks))]
 			i := rng.IntN(len(doc))
 			doc = append(doc[:i:i], append([]byte(tok), doc[i:]...)...)

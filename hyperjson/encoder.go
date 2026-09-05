@@ -46,7 +46,7 @@ func (e *encoder) comma(first bool) bool {
 	return false
 }
 
-// objectKey writes a member key and colon: "key":
+// objectKey writes a JSON object member key followed by a colon.
 func (e *encoder) objectKey(name string) {
 	e.str(name)
 	e.rawByte(':')

@@ -25,13 +25,12 @@
 // [Marshal] serializes a parsed hyperpb message by walking its compiled tdp
 // field tables directly, reading values through the per-field getter thunks.
 //
-// [Unmarshal] parses protojson into a freshly allocated hyperpb message. In
-// this proof of concept it is implemented as a descriptor-guided JSON-to-wire
-// transcoder: the JSON input is converted to protobuf wire format and handed
-// to hyperpb's wire parser, which reuses the arena, zero-copy string storage,
-// and profile-guided layout machinery unchanged. A future version may write
-// arena storage directly, which requires tdp layout support for strings that
-// do not alias the parse source.
+// [Unmarshal] parses protojson into a freshly allocated hyperpb message.
+// By default, it writes directly into the hyperpb arena using a compiled
+// per-type plan for maximum throughput and zero-allocation parsing. If direct
+// writing is unavailable (for example, on custom well-known types or
+// uncompiled extensions), it falls back to a descriptor-guided JSON-to-wire
+// transcoder that feeds hyperpb's wire-format parser.
 //
 // # Unsupported protojson options
 //

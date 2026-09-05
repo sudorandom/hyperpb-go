@@ -92,10 +92,12 @@ func (m *Message) MarshalMessage(b []byte) ([]byte, error) {
 		if ov != nil {
 			if val, ok := ov.Fields[num]; ok {
 				seen.add(num)
-				var err error
-				b, err = marshalReflectField(b, fd, val.val)
-				if err != nil {
-					return nil, err
+				if m.Has(fd) {
+					var err error
+					b, err = marshalReflectField(b, fd, val.val)
+					if err != nil {
+						return nil, err
+					}
 				}
 				f = xunsafe.Add(f, 1)
 				i++
@@ -134,7 +136,7 @@ func (m *Message) MarshalMessage(b []byte) ([]byte, error) {
 	// 5. Extensions/extra fields in the overlay
 	if ov != nil {
 		for num, val := range ov.Fields {
-			if !seen.has(num) && !ov.Cleared[num] {
+			if !seen.has(num) && !ov.Cleared[num] && m.Has(val.fd) {
 				var err error
 				b, err = marshalReflectField(b, val.fd, val.val)
 				if err != nil {

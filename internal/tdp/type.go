@@ -20,7 +20,6 @@ import (
 	"unsafe"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
-
 	"google.golang.org/protobuf/runtime/protoiface"
 
 	"buf.build/go/hyperpb/internal/debug"

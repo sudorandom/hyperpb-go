@@ -31,7 +31,6 @@ import (
 	"strings"
 	"unsafe"
 
-
 	"buf.build/go/hyperpb/internal/debug"
 	"buf.build/go/hyperpb/internal/stats"
 	"buf.build/go/hyperpb/internal/xunsafe"
@@ -331,7 +330,6 @@ func (m *Metrics) Report(b BenchmarkReporter) {
 	b.Helper()
 	b.ReportMetric(m.Probes.Get(), "probes/seq")
 }
-
 
 // Merge merges each metric in that into m.
 func (m *Metrics) Merge(that *Metrics) {

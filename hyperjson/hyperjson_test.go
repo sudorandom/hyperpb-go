@@ -27,12 +27,6 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/dynamicpb"
-
-	"buf.build/go/hyperpb"
-	"buf.build/go/hyperpb/hyperjson"
-	testpb "buf.build/go/hyperpb/internal/gen/test"
-
-	// Register the WKT file descriptors used by the dynamic test file.
 	_ "google.golang.org/protobuf/types/known/anypb"
 	_ "google.golang.org/protobuf/types/known/durationpb"
 	_ "google.golang.org/protobuf/types/known/emptypb"
@@ -40,16 +34,18 @@ import (
 	_ "google.golang.org/protobuf/types/known/structpb"
 	_ "google.golang.org/protobuf/types/known/timestamppb"
 	_ "google.golang.org/protobuf/types/known/wrapperspb"
+
+	"buf.build/go/hyperpb"
+	"buf.build/go/hyperpb/hyperjson"
+	testpb "buf.build/go/hyperpb/internal/gen/test"
 )
 
-var (
-	compiledTypes sync.Map // protoreflect.MessageDescriptor -> *hyperpb.MessageType
-)
+var compiledTypes sync.Map // protoreflect.MessageDescriptor -> *hyperpb.MessageType
 
 func compileFor(t testing.TB, md protoreflect.MessageDescriptor) *hyperpb.MessageType {
 	t.Helper()
 	if ct, ok := compiledTypes.Load(md); ok {
-		return ct.(*hyperpb.MessageType)
+		return ct.(*hyperpb.MessageType) //nolint:errcheck
 	}
 	ct := hyperpb.CompileMessageDescriptor(md)
 	compiledTypes.Store(md, ct)
@@ -289,6 +285,7 @@ func TestUnmarshalErrors(t *testing.T) {
 		"neg leading zero":   `{"a1": -01}`,
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			hm := hyperpb.NewMessage(ct)
 			assert.Error(t, hyperjson.Unmarshal([]byte(input), hm), "input: %s", input)
 		})
@@ -434,8 +431,95 @@ func TestWKTErrors(t *testing.T) {
 		"empty with field":       `{"empty": {"x": 1}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			hm := hyperpb.NewMessage(ct)
 			assert.Error(t, hyperjson.Unmarshal([]byte(input), hm), "input: %s", input)
 		})
 	}
+}
+
+func TestNilMessageAPI(t *testing.T) {
+	t.Parallel()
+	var nilMsg *hyperpb.Message
+
+	_, err := hyperjson.Marshal(nilMsg)
+	require.Error(t, err)
+
+	_, err = hyperjson.MarshalAppend([]byte{}, nilMsg)
+	require.Error(t, err)
+
+	_, err = hyperjson.MarshalOptions{}.Marshal(nilMsg)
+	require.Error(t, err)
+
+	_, err = hyperjson.MarshalOptions{}.MarshalAppend([]byte{}, nilMsg)
+	require.Error(t, err)
+
+	err = hyperjson.Unmarshal([]byte("{}"), nilMsg)
+	require.Error(t, err)
+
+	err = hyperjson.UnmarshalOptions{}.Unmarshal([]byte("{}"), nilMsg)
+	require.Error(t, err)
+}
+
+func TestDurationBoundaryCases(t *testing.T) {
+	t.Parallel()
+	md := buildWKTFile(t)
+	ct := compileFor(t, md)
+
+	// Valid max and min duration boundaries
+	for _, in := range []string{
+		`{"dur": "315576000000s"}`,
+		`{"dur": "-315576000000s"}`,
+		`{"dur": "315576000000.000000000s"}`,
+		`{"dur": "-315576000000.000000000s"}`,
+		`{"dur": "0s"}`,
+	} {
+		hm := hyperpb.NewMessage(ct)
+		require.NoError(t, hyperjson.Unmarshal([]byte(in), hm), "input: %s", in)
+		out, err := hyperjson.Marshal(hm)
+		require.NoError(t, err)
+		if in != `{"dur": "0s"}` {
+			assert.Contains(t, string(out), "315576000000")
+		}
+	}
+
+	// Invalid durations strictly beyond boundaries
+	for _, in := range []string{
+		`{"dur": "315576000000.000000001s"}`,
+		`{"dur": "315576000000.1s"}`,
+		`{"dur": "-315576000000.000000001s"}`,
+		`{"dur": "-315576000000.1s"}`,
+		`{"dur": "315576000001s"}`,
+		`{"dur": "-315576000001s"}`,
+	} {
+		hm := hyperpb.NewMessage(ct)
+		assert.Error(t, hyperjson.Unmarshal([]byte(in), hm), "expected error for: %s", in)
+	}
+}
+
+type testCustomResolver struct {
+	called bool
+}
+
+func (r *testCustomResolver) FindMessageByURL(url string) (protoreflect.MessageType, error) {
+	return protoregistry.GlobalTypes.FindMessageByURL(url)
+}
+
+func (r *testCustomResolver) FindExtensionByName(name protoreflect.FullName) (protoreflect.ExtensionType, error) {
+	r.called = true
+	return protoregistry.GlobalTypes.FindExtensionByName(name)
+}
+
+func TestCustomExtensionResolver(t *testing.T) {
+	t.Parallel()
+	md := mdOf(&testpb.Extensions{})
+	ct := compileFor(t, md)
+
+	res := &testCustomResolver{}
+	opts := hyperjson.UnmarshalOptions{Resolver: res}
+	hm := hyperpb.NewMessage(ct)
+
+	err := opts.Unmarshal([]byte(`{"[hyperpb.test.b1]": 42}`), hm)
+	require.NoError(t, err)
+	assert.True(t, res.called, "custom ExtensionResolver should have been called")
 }

@@ -131,15 +131,15 @@ func init() {
 	}
 }
 
-// readString reads a JSON string. The returned slice aliases the input
-// unless the string contained escapes, in which case it is freshly allocated.
-// The caller must not retain the result beyond the input's lifetime unless it
-// copies it.
-func (d *decoder) readString() ([]byte, error) {
+// readStringView reads a JSON string.
+// If the string contains no escape sequences, escaped is false and start is the
+// offset within d.data where the string bytes begin. If escaped is true, the
+// returned slice is freshly allocated.
+func (d *decoder) readStringView() (s []byte, start int, escaped bool, err error) {
 	if err := d.expect('"'); err != nil {
-		return nil, err
+		return nil, 0, false, err
 	}
-	start := d.off
+	start = d.off
 	data := d.data
 	i := d.off
 	for i < len(data) {
@@ -150,24 +150,34 @@ func (d *decoder) readString() ([]byte, error) {
 		switch c := data[i]; {
 		case c == '"':
 			d.off = i + 1
-			return data[start:i], nil
+			return data[start:i], start, false, nil
 		case c == '\\':
 			d.off = i
-			return d.readStringSlow(start)
+			s, err := d.readStringSlow(start)
+			return s, 0, true, err
 		case c < 0x20:
 			d.off = i
-			return nil, d.errf("invalid control character in string")
+			return nil, 0, false, d.errf("invalid control character in string")
 		default:
 			r, size := utf8.DecodeRune(data[i:])
 			if r == utf8.RuneError && size == 1 {
 				d.off = i
-				return nil, d.errf("invalid UTF-8 in string")
+				return nil, 0, false, d.errf("invalid UTF-8 in string")
 			}
 			i += size
 		}
 	}
 	d.off = i
-	return nil, d.errf("unterminated string")
+	return nil, 0, false, d.errf("unterminated string")
+}
+
+// readString reads a JSON string. The returned slice aliases the input
+// unless the string contained escapes, in which case it is freshly allocated.
+// The caller must not retain the result beyond the input's lifetime unless it
+// copies it.
+func (d *decoder) readString() ([]byte, error) {
+	s, _, _, err := d.readStringView()
+	return s, err
 }
 
 // readStringSlow handles strings with escape sequences, allocating a buffer.

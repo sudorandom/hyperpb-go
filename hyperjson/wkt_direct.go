@@ -22,7 +22,6 @@ import (
 	"buf.build/go/hyperpb/internal/tdp/repeated"
 )
 
-
 // wktValue parses the custom JSON shape of a well-known type directly into
 // its message storage. Because every WKT is structurally made of ordinary
 // fields, most cases delegate to the generic field writers on the WKT's own
@@ -105,7 +104,7 @@ func (w *writer) wktValue(p *dplan, m *dynamic.Message) error {
 		}
 		df := &p.byIdx[0]
 		strs := (*repeated.Strings)(fieldPtr(m, df.offset))
-		for _, path := range strings.Split(string(s), ",") {
+		for path := range strings.SplitSeq(string(s), ",") {
 			snake, ok := fieldMaskPathToSnake(path)
 			if !ok {
 				return w.d.errf("invalid google.protobuf.FieldMask path %q", path)
@@ -139,4 +138,3 @@ func (w *writer) anyValue(p *dplan, m *dynamic.Message) error {
 	store(m, &p.byIdx[1], w.append(payload))
 	return nil
 }
-

@@ -150,3 +150,85 @@ func TestMutateThenJSONRoundTrip(t *testing.T) {
 	require.Equal(t, 3, got.Len(), "appended element must round-trip: %s", out)
 	assert.EqualValues(t, 3, got.Get(2).Int())
 }
+
+// TestProto3MutationToZero confirms that setting a proto3 scalar without presence
+// to zero in the mutation overlay removes it from Has, Range, hyperjson.Marshal,
+// and proto.Marshal, properly shadowing any previous non-zero value.
+func TestProto3MutationToZero(t *testing.T) {
+	t.Parallel()
+	md := mdOf(&testpb.Scalars{})
+	ct := compileFor(t, md)
+	fdA1 := md.Fields().ByName("a1") // int32
+
+	// 1. Mutating from non-zero to zero on an empty message
+	hm1 := hyperpb.NewMessage(ct)
+	hm1.Set(fdA1, protoreflect.ValueOfInt32(42))
+	require.True(t, hm1.Has(fdA1))
+	hm1.Set(fdA1, protoreflect.ValueOfInt32(0))
+	assert.False(t, hm1.Has(fdA1), "proto3 scalar set to 0 must report Has=false")
+
+	count := 0
+	hm1.Range(func(fd protoreflect.FieldDescriptor, val protoreflect.Value) bool {
+		if fd.Number() == fdA1.Number() {
+			count++
+		}
+		return true
+	})
+	assert.Equal(t, 0, count, "proto3 scalar set to 0 must not be yielded by Range")
+
+	jsonOut, err := hyperjson.Marshal(hm1)
+	require.NoError(t, err)
+	assert.JSONEq(t, "{}", string(jsonOut), "proto3 scalar set to 0 must be omitted in hyperjson")
+
+	wireOut, err := proto.Marshal(hm1)
+	require.NoError(t, err)
+	assert.Empty(t, wireOut, "proto3 scalar set to 0 must be omitted on wire")
+
+	// 2. Mutating an existing parsed message (shadowing arena storage)
+	hm2 := hyperpb.NewMessage(ct)
+	require.NoError(t, hyperjson.Unmarshal([]byte(`{"a1": 42}`), hm2))
+	require.True(t, hm2.Has(fdA1))
+
+	hm2.Set(fdA1, protoreflect.ValueOfInt32(0))
+	assert.False(t, hm2.Has(fdA1), "proto3 scalar mutated to 0 must shadow arena and report Has=false")
+
+	count = 0
+	hm2.Range(func(fd protoreflect.FieldDescriptor, val protoreflect.Value) bool {
+		if fd.Number() == fdA1.Number() {
+			count++
+		}
+		return true
+	})
+	assert.Equal(t, 0, count, "shadowed proto3 scalar set to 0 must not be yielded by Range")
+
+	jsonOut2, err := hyperjson.Marshal(hm2)
+	require.NoError(t, err)
+	assert.JSONEq(t, "{}", string(jsonOut2), "shadowed proto3 scalar set to 0 must be omitted in hyperjson")
+
+	wireOut2, err := proto.Marshal(hm2)
+	require.NoError(t, err)
+	assert.Empty(t, wireOut2, "shadowed proto3 scalar set to 0 must be omitted on wire")
+}
+
+// TestProto2MutationZeroPresence confirms that setting a proto2 scalar (with presence)
+// to zero is preserved in Has, Range, and wire serialization.
+func TestProto2MutationZeroPresence(t *testing.T) {
+	t.Parallel()
+	md := mdOf(&testpb.Required{})
+	ct := compileFor(t, md)
+	fdX := md.Fields().ByName("x") // required int32 x = 1
+
+	hm := hyperpb.NewMessage(ct)
+	hm.Set(fdX, protoreflect.ValueOfInt32(0))
+	assert.True(t, hm.Has(fdX), "field with presence set to 0 must report Has=true")
+
+	found := false
+	hm.Range(func(fd protoreflect.FieldDescriptor, val protoreflect.Value) bool {
+		if fd.Number() == fdX.Number() {
+			found = true
+			assert.EqualValues(t, 0, val.Int())
+		}
+		return true
+	})
+	assert.True(t, found, "field with presence set to 0 must be yielded by Range")
+}

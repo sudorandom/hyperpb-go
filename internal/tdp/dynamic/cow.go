@@ -67,6 +67,32 @@ func zeroValueForKind(k protoreflect.Kind) protoreflect.Value {
 	}
 }
 
+func isZeroValue(fd protoreflect.FieldDescriptor, val protoreflect.Value) bool {
+	if !val.IsValid() {
+		return true
+	}
+	switch fd.Kind() {
+	case protoreflect.BoolKind:
+		return !val.Bool()
+	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind,
+		protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
+		return val.Int() == 0
+	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind,
+		protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
+		return val.Uint() == 0
+	case protoreflect.FloatKind, protoreflect.DoubleKind:
+		return val.Float() == 0
+	case protoreflect.StringKind:
+		return len(val.String()) == 0
+	case protoreflect.BytesKind:
+		return len(val.Bytes()) == 0
+	case protoreflect.EnumKind:
+		return val.Enum() == 0
+	default:
+		return false
+	}
+}
+
 type overlayVal struct {
 	fd  protoreflect.FieldDescriptor
 	val protoreflect.Value
@@ -174,6 +200,7 @@ func (l *cowList) AppendMutable() protoreflect.Value {
 }
 
 func (l *cowList) Truncate(n int) {
+	clear(l.elems[n:])
 	l.elems = l.elems[:n]
 }
 
