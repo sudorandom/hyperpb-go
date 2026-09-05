@@ -139,6 +139,36 @@ func TestScalars(t *testing.T) {
 	roundTrip(t, md, `{"a1": "42", "a2": 100, "a11": "1.25", "a12": "-Infinity"}`)
 }
 
+func TestIntegerExponentForms(t *testing.T) {
+	t.Parallel()
+	md := mdOf(&testpb.Scalars{})
+	// Fraction/exponent integer forms must be normalized with exact decimal
+	// arithmetic; a float64 intermediate rounds values above 2^53
+	// (fuzz-logs/failures/failure-2.log).
+	roundTrip(t, md, `{"a2": "-92233720368.47758e8"}`)
+	roundTrip(t, md, `{"a2": 92233720368.47758e8}`)
+	// In-range values that float64 rounds to exactly 2^63 / 2^64 were
+	// previously misreported as out of range.
+	roundTrip(t, md, `{"a2": "9.223372036854775806e18"}`)
+	roundTrip(t, md, `{"a4": "1.8446744073709551614e19"}`)
+	// Negative exponents, trailing fraction zeros, negative zero.
+	roundTrip(t, md, `{"a1": "1200e-2", "a3": "4.294967294e9"}`)
+	roundTrip(t, md, `{"a1": "12.000", "a5": "-0.0"}`)
+
+	// Non-integral, out-of-range, and non-JSON number forms stay rejected.
+	ct := compileFor(t, md)
+	for _, bad := range []string{
+		`{"a1": "1.5"}`,
+		`{"a1": "5e-1"}`,
+		`{"a2": "1e19"}`,
+		`{"a2": "9.223372036854775808e18"}`,
+		`{"a4": "-1.0"}`,
+		`{"a1": "0x10p1"}`, // strconv.ParseFloat hex-float leniency must not leak in
+	} {
+		require.Error(t, hyperjson.Unmarshal([]byte(bad), hyperpb.NewMessage(ct)), "input %s", bad)
+	}
+}
+
 func TestScalarsNullMeansUnset(t *testing.T) {
 	t.Parallel()
 	md := mdOf(&testpb.Scalars{})

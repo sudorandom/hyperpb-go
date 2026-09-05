@@ -23,6 +23,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/dynamicpb"
 
 	"buf.build/go/hyperpb"
@@ -71,6 +72,33 @@ func TestStressDifferential(t *testing.T) {
 		}
 	}
 	t.Logf("ran %d iterations over %v (seed %d)", n, dur, seed)
+}
+
+// TestStressRegressions replays inputs that previously failed the stress
+// tester (archived under fuzz-logs/failures/).
+func TestStressRegressions(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		sel  byte
+		doc  string
+	}{
+		// NullValue field from an integer literal: protojson accepts any
+		// int32 enum number but always re-emits null, so the round-trip
+		// check must tolerate the shared lossiness.
+		{"null-value-integer", 230, `{"optionalNullValue":  42}`},
+		// Quoted int64 in scientific notation: must be normalized with
+		// exact decimal arithmetic, not through float64.
+		{"int64-exponent-exact", 216, `{"a1": 42, "a2": "-92233720368.47758e8", "a11": 1.5, "a12": "-Infinity", "a13": true, "a14": "héllo \"world\"\n", "a15": "AQIDBA=="}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if msg := checkDifferential(tc.sel, []byte(tc.doc)); msg != "" {
+				t.Errorf("sel %d:\n%s\ninput: %q", tc.sel, msg, tc.doc)
+			}
+		})
+	}
 }
 
 // mutateDoc applies a few random mutations to a seed document.
@@ -151,7 +179,28 @@ func checkDifferential(sel byte, data []byte) string {
 		return fmt.Sprintf("round trip re-parse failed: %v (emitted %q)", err, out)
 	}
 	if !proto.Equal(direct, back) {
+		// protojson is inherently lossy in some corners: a NullValue field
+		// parsed from an integer literal stores that enum number but always
+		// re-emits as null. Only report round-trip loss that protojson does
+		// not share on the same input.
+		if errO == nil && !protojsonRoundTrips(oracle, md) {
+			return ""
+		}
 		return fmt.Sprintf("round trip inequality (emitted %q)", out)
 	}
 	return ""
+}
+
+// protojsonRoundTrips reports whether protojson's own marshal/unmarshal
+// round trip of msg preserves it.
+func protojsonRoundTrips(msg proto.Message, md protoreflect.MessageDescriptor) bool {
+	out, err := protojson.Marshal(msg)
+	if err != nil {
+		return false
+	}
+	back := dynamicpb.NewMessage(md)
+	if err := protojson.Unmarshal(out, back); err != nil {
+		return false
+	}
+	return proto.Equal(msg, back)
 }

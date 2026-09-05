@@ -493,28 +493,16 @@ func parseInt(tok []byte, bits int) (int64, error) {
 	if v, err := strconv.ParseInt(s, 10, bits); err == nil {
 		return v, nil
 	}
-	// For a plain integer literal, ParseInt's verdict is final: falling back
-	// to float64 would silently accept out-of-range values that happen to
-	// round to a representable integer (e.g. -9223372036854775809 rounds to
-	// exactly MinInt64).
+	// For a plain integer literal, ParseInt's verdict is final.
 	if isIntLiteral(tok) {
 		return 0, fmt.Errorf("integer out of range: %q", tok)
 	}
-	f, err := strconv.ParseFloat(s, 64)
+	norm, ok := normalizeIntDecimal(tok)
+	if !ok {
+		return 0, fmt.Errorf("invalid integer: %q", tok)
+	}
+	v, err := strconv.ParseInt(norm, 10, bits)
 	if err != nil {
-		return 0, fmt.Errorf("invalid integer: %q", tok)
-	}
-	// Bound-check before converting: int64(f) is not defined for values out
-	// of range, and the float64(v) != f round-trip check cannot catch 2^63
-	// (MaxInt64 rounds up to exactly 2^63 as a float64).
-	if f >= 0x1p63 || f < -0x1p63 {
-		return 0, fmt.Errorf("integer out of range: %q", tok)
-	}
-	v := int64(f)
-	if float64(v) != f {
-		return 0, fmt.Errorf("invalid integer: %q", tok)
-	}
-	if bits == 32 && (v > 0x7fffffff || v < -0x80000000) {
 		return 0, fmt.Errorf("integer out of range: %q", tok)
 	}
 	return v, nil
@@ -534,19 +522,138 @@ func parseUint(tok []byte, bits int) (uint64, error) {
 	if isIntLiteral(tok) {
 		return 0, fmt.Errorf("unsigned integer out of range: %q", tok)
 	}
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil || f < 0 {
+	norm, ok := normalizeIntDecimal(tok)
+	if !ok {
 		return 0, fmt.Errorf("invalid unsigned integer: %q", tok)
 	}
-	if f >= 0x1p64 {
-		return 0, fmt.Errorf("unsigned integer out of range: %q", tok)
-	}
-	v := uint64(f)
-	if float64(v) != f {
-		return 0, fmt.Errorf("invalid unsigned integer: %q", tok)
-	}
-	if bits == 32 && v > 0xffffffff {
+	v, err := strconv.ParseUint(norm, 10, bits)
+	if err != nil {
 		return 0, fmt.Errorf("unsigned integer out of range: %q", tok)
 	}
 	return v, nil
+}
+
+// normalizeIntDecimal converts a JSON number token carrying a fraction
+// and/or exponent into a plain decimal integer string using exact decimal
+// arithmetic, matching protojson's normalizeToIntString. Going through
+// float64 instead would round values above 2^53 (protojson parses
+// "-92233720368.47758e8" as exactly -9223372036847758000) and reject
+// in-range values that round to 2^63. Returns ok=false if the token is not
+// a well-formed JSON number or is not mathematically an integer.
+func normalizeIntDecimal(tok []byte) (string, bool) {
+	rest := tok
+	var neg bool
+	if len(rest) > 0 && rest[0] == '-' {
+		neg = true
+		rest = rest[1:]
+	}
+
+	// Integer part: "0", or a nonzero digit followed by any digits.
+	var intDigits []byte
+	switch {
+	case len(rest) == 0:
+		return "", false
+	case rest[0] == '0':
+		rest = rest[1:]
+	case rest[0] >= '1' && rest[0] <= '9':
+		n := 1
+		for n < len(rest) && rest[n] >= '0' && rest[n] <= '9' {
+			n++
+		}
+		intDigits, rest = rest[:n], rest[n:]
+	default:
+		return "", false
+	}
+
+	// Fraction: '.' followed by one or more digits. Trailing zeros are
+	// insignificant, and dropping them here is what lets forms like "4.0"
+	// and "150.0e-1" normalize to integers.
+	var fracDigits []byte
+	if len(rest) > 0 && rest[0] == '.' {
+		rest = rest[1:]
+		n := 0
+		for n < len(rest) && rest[n] >= '0' && rest[n] <= '9' {
+			n++
+		}
+		if n == 0 {
+			return "", false
+		}
+		fracDigits, rest = rest[:n], rest[n:]
+		for len(fracDigits) > 0 && fracDigits[len(fracDigits)-1] == '0' {
+			fracDigits = fracDigits[:len(fracDigits)-1]
+		}
+	}
+
+	// Exponent: e/E, an optional sign, and one or more digits. The magnitude
+	// is clamped far above any exponent that could still yield an in-range
+	// integer, so arbitrarily long exponents cannot overflow.
+	exp := 0
+	if len(rest) > 0 && (rest[0] == 'e' || rest[0] == 'E') {
+		rest = rest[1:]
+		expNeg := false
+		if len(rest) > 0 && (rest[0] == '+' || rest[0] == '-') {
+			expNeg = rest[0] == '-'
+			rest = rest[1:]
+		}
+		if len(rest) == 0 {
+			return "", false
+		}
+		for _, c := range rest {
+			if c < '0' || c > '9' {
+				return "", false
+			}
+			exp = min(exp*10+int(c-'0'), 100000)
+		}
+		rest = nil
+		if expNeg {
+			exp = -exp
+		}
+	}
+	if len(rest) != 0 {
+		return "", false
+	}
+
+	// Zero stays zero under any exponent; protojson also drops the sign.
+	if len(intDigits) == 0 && len(fracDigits) == 0 {
+		return "0", true
+	}
+
+	var digits []byte
+	if exp >= 0 {
+		// Shift fraction digits into the integer part, padding with zeros.
+		if len(fracDigits) > exp {
+			return "", false
+		}
+		// 20 digits covers every uint64; anything longer is out of range.
+		if len(intDigits)+exp > 20 {
+			return "", false
+		}
+		digits = append(digits, intDigits...)
+		digits = append(digits, fracDigits...)
+		for range exp - len(fracDigits) {
+			digits = append(digits, '0')
+		}
+	} else {
+		// Shift integer digits out; all shifted-out digits must be zero.
+		if len(fracDigits) > 0 {
+			return "", false
+		}
+		pointIndex := len(intDigits) + exp
+		if pointIndex < 0 {
+			return "", false
+		}
+		for _, c := range intDigits[pointIndex:] {
+			if c != '0' {
+				return "", false
+			}
+		}
+		digits = intDigits[:pointIndex]
+		if len(digits) == 0 {
+			digits = []byte("0")
+		}
+	}
+	if neg {
+		return "-" + string(digits), true
+	}
+	return string(digits), true
 }
