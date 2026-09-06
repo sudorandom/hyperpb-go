@@ -2,9 +2,8 @@
 
 # hyperpb
 
-`hyperpb` is a highly optimized dynamic message library for Protobuf or read-only
-workloads. It is designed to be a drop-in replacement for
-[`dynamicpb`][dynamicpb],
+`hyperpb` is a highly optimized dynamic message library for Protobuf workloads. It
+is designed to be a drop-in replacement for [`dynamicpb`][dynamicpb],
 `protobuf-go`'s canonical solution for working with completely dynamic messages.
 
 `hyperpb`'s parser is an efficient VM for a special instruction set, a variant of
@@ -149,9 +148,11 @@ func processDynamicMessage(
 }
 ```
 
-Since any generic, non-mutating operation will work with `hyperpb` messages,
+Since any generic operation will work with `hyperpb` messages,
 we can use them as an efficient transcoding medium from the wire format, for
 runtime-loaded messages.
+
+While standard `protojson.Marshal(msg)` works out of the box because of reflection, `hyperpb` includes its own highly-optimized JSON codec, `hyperjson`, which compiles schemas at runtime to eliminate reflection overhead.
 
 ```go
 func dynamicMessageToJSON(
@@ -169,8 +170,8 @@ func dynamicMessageToJSON(
         return nil, err
     }
 
-    // Dump the message to JSON. This just works!
-    return protojson.Marshal(msg)
+    // Dump the message to JSON. hyperjson is optimized for hyperpb messages!
+    return hyperjson.Marshal(msg)
 }
 ```
 
@@ -362,8 +363,8 @@ func (c *requestContext) Handle(req Request) {
 ## Compatibility
 
 `hyperpb` is experimental software, and the API may change drastically before
-`v1`. It currently implements all Protobuf language constructs. It does not
-implement mutation of parsed messages, however.
+`v1`. It currently implements all Protobuf language constructs. It fully supports
+mutation of parsed messages via an efficient, zero-allocation copy-on-write overlay.
 
 ### Supported Targets
 
